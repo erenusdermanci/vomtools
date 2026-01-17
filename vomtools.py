@@ -381,11 +381,32 @@ class VomTools:
         self.tray_icon = None
         self.is_visible = True
         
+        self.setup_scrollbar_style()
         self.setup_ui()
         self.setup_tray()
         self.bind_keys()
         self.start_animations()
         self.log_startup()
+    
+    def setup_scrollbar_style(self):
+        """Configure ttk scrollbar to match the dark theme"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure(
+            "Dark.Vertical.TScrollbar",
+            background=self.colors['bg_elevated'],
+            troughcolor=self.colors['bg'],
+            bordercolor=self.colors['bg'],
+            arrowcolor=self.colors['primary_dim'],
+            lightcolor=self.colors['bg'],
+            darkcolor=self.colors['bg']
+        )
+        style.map(
+            "Dark.Vertical.TScrollbar",
+            background=[('active', self.colors['primary_dark']), ('pressed', self.colors['primary_dim'])],
+            arrowcolor=[('active', self.colors['primary'])]
+        )
     
     def get_available_font(self, size):
         import tkinter.font as tkfont
@@ -471,11 +492,14 @@ class VomTools:
         console_border = tk.Frame(self.root, bg=self.colors['primary_dark'])
         console_border.place(x=278, y=153, relwidth=0.655, relheight=0.66)
         
-        self.console = scrolledtext.ScrolledText(
-            console_border,
+        console_inner = tk.Frame(console_border, bg='#080808')
+        console_inner.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        
+        self.console = tk.Text(
+            console_inner,
             font=self.small_font,
             fg=self.colors['text'],
-            bg='#080808',  # Very dark to show orb glow through edges
+            bg='#080808',
             insertbackground=self.colors['primary'],
             selectbackground=self.colors['primary_dark'],
             selectforeground=self.colors['text'],
@@ -484,7 +508,17 @@ class VomTools:
             padx=12,
             pady=10
         )
-        self.console.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        
+        console_scrollbar = ttk.Scrollbar(
+            console_inner,
+            orient="vertical",
+            command=self.console.yview,
+            style="Dark.Vertical.TScrollbar"
+        )
+        self.console.configure(yscrollcommand=console_scrollbar.set)
+        
+        console_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.console.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # Configure text tags
         self.console.tag_configure("timestamp", foreground=self.colors['text_muted'])
@@ -834,17 +868,26 @@ $results | ConvertTo-Json -Compress
             self.log_raw("Could not parse process list", "error")
             self.set_status("PARSE ERROR", True)
     
+    def center_popup(self, popup, width, height):
+        """Center a popup window over the main application window"""
+        self.root.update_idletasks()
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+        main_w = self.root.winfo_width()
+        main_h = self.root.winfo_height()
+        x = main_x + (main_w - width) // 2
+        y = main_y + (main_h - height) // 2
+        popup.geometry(f"{width}x{height}+{x}+{y}")
+    
     def show_suspend_selector(self, processes):
         popup = tk.Toplevel(self.root)
-        popup.title("Suspend/Resume Task")
         popup.configure(bg=self.colors['bg'])
-        popup.geometry("550x450")
-        popup.transient(self.root)
+        popup.overrideredirect(True)
+        self.center_popup(popup, 550, 450)
+        popup.deiconify()
+        popup.lift()
         popup.grab_set()
-        
-        icon_path = os.path.join(os.path.dirname(__file__), 'vomtools.ico')
-        if os.path.exists(icon_path):
-            popup.iconbitmap(icon_path)
+        popup.focus_force()
         
         header = tk.Frame(popup, bg=self.colors['bg'])
         header.pack(fill=tk.X, padx=20, pady=(20, 15))
@@ -869,7 +912,7 @@ $results | ConvertTo-Json -Compress
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
         
         canvas = tk.Canvas(list_frame, bg=self.colors['bg'], highlightthickness=0)
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview, style="Dark.Vertical.TScrollbar")
         scrollable_frame = tk.Frame(canvas, bg=self.colors['bg'])
         
         scrollable_frame.bind(
@@ -1157,15 +1200,13 @@ $results | ConvertTo-Json -Compress
     def show_device_selector(self, devices):
         """Modern device selector popup"""
         popup = tk.Toplevel(self.root)
-        popup.title("Audio Device")
         popup.configure(bg=self.colors['bg'])
-        popup.geometry("450x380")
-        popup.transient(self.root)
+        popup.overrideredirect(True)
+        self.center_popup(popup, 450, 380)
+        popup.deiconify()
+        popup.lift()
         popup.grab_set()
-        
-        icon_path = os.path.join(os.path.dirname(__file__), 'vomtools.ico')
-        if os.path.exists(icon_path):
-            popup.iconbitmap(icon_path)
+        popup.focus_force()
         
         # Header
         header = tk.Frame(popup, bg=self.colors['bg'])
