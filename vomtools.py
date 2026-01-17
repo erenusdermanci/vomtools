@@ -48,13 +48,17 @@ class AnimatedOrb:
         # Energy rings
         self.rings = []
         
+        # Animation control
+        self._running = False
+        self._after_id = None
+        
         # Bind mouse events
         self.canvas.bind("<Motion>", self.on_mouse_move)
         self.canvas.bind("<Button-1>", self.on_click)
         self.canvas.bind("<Configure>", self.on_resize)
         
         # Start animation
-        self.animate()
+        self.start()
     
     def init_particles(self):
         """Initialize floating particles"""
@@ -112,8 +116,33 @@ class AnimatedOrb:
     def lerp(self, a, b, t):
         return a + (b - a) * t
     
-    def animate(self):
-        """Main animation loop"""
+    def start(self):
+        """Start the animation loop"""
+        if self._running:
+            return
+        self._running = True
+        self._tick()
+    
+    def stop(self):
+        """Stop the animation loop"""
+        self._running = False
+        if self._after_id is not None:
+            try:
+                self.canvas.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+    
+    def _tick(self):
+        """Animation tick - schedules next frame"""
+        if not self._running:
+            self._after_id = None
+            return
+        self._animate_frame()
+        self._after_id = self.canvas.after(16, self._tick)
+    
+    def _animate_frame(self):
+        """Main animation frame - render one frame"""
         self.canvas.delete("orb_bg")
         
         # Update orb position (smooth follow)
@@ -258,9 +287,6 @@ class AnimatedOrb:
                 )
                 active_rings.append(ring)
         self.rings = active_rings
-        
-        # Continue animation
-        self.canvas.after(16, self.animate)
 
 # Minimalist ASCII banner - clean pixel-art style
 ASCII_BANNER = r"""
@@ -325,6 +351,9 @@ class VomTools:
         # Animation state
         self.cursor_visible = True
         self.animated_orb = None
+        self._after_cursor = None
+        self._after_scanline = None
+        self._after_clipboard = None
         
         # Clipboard history for clipboard manager
         self.clipboard_history = []
@@ -677,23 +706,39 @@ class VomTools:
         self.root.after(0, self.toggle_visibility)
     
     def toggle_visibility(self, icon=None, item=None):
+        # Route through Tk main thread for thread safety (pystray calls from its own thread)
+        self.root.after(0, self._toggle_visibility_impl)
+    
+    def _toggle_visibility_impl(self):
+        """Actual toggle implementation - runs on Tk thread"""
         if self.is_visible:
             self.hide_to_tray()
         else:
             self.show_from_tray()
     
     def hide_to_tray(self):
+        """Hide window and stop all animations for 0 CPU usage"""
         self.is_visible = False
+        self.stop_animations()
         self.root.withdraw()
     
     def show_from_tray(self):
+        """Show window and resume animations"""
         self.is_visible = True
         self.root.deiconify()
-        self.root.attributes('-topmost', True)  # Ensure always on top
-        self.root.lift()
-        self.root.focus_force()
+        
+        # Resume animations after window is mapped
+        def _resume():
+            self.resume_animations()
+            self.root.attributes('-topmost', True)
+            self.root.lift()
+            self.root.focus_force()
+        
+        self.root.after(50, _resume)
     
     def quit_app(self, icon=None, item=None):
+        # Stop all animations first
+        self.stop_animations()
         if self.tray_icon:
             self.tray_icon.stop()
         self.root.quit()
@@ -706,26 +751,94 @@ class VomTools:
     def start_animations(self):
         """Start background animations"""
         self.scan_line_y = 0
-        self.animate_cursor()
-        self.animate_scanline()
+        self.start_cursor()
+        self.start_scanline()
+    
+    def stop_animations(self):
+        """Stop all background animations"""
+        if self.animated_orb:
+            self.animated_orb.stop()
+        self.stop_cursor()
+        self.stop_scanline()
+        self.stop_clipboard_monitor()
+    
+    def resume_animations(self):
+        """Resume all background animations"""
+        if self.animated_orb:
+            self.animated_orb.start()
+        self.start_cursor()
+        self.start_scanline()
+        self.start_clipboard_monitor()
     
     def start_clipboard_monitor(self):
         """Monitor clipboard for history"""
-        def monitor():
-            self.update_clipboard_history()
-            self.root.after(1000, monitor)
-        monitor()
+        if self._after_clipboard is not None:
+            return
+        self._clipboard_tick()
+    
+    def stop_clipboard_monitor(self):
+        """Stop clipboard monitoring"""
+        if self._after_clipboard is not None:
+            try:
+                self.root.after_cancel(self._after_clipboard)
+            except Exception:
+                pass
+            self._after_clipboard = None
+    
+    def _clipboard_tick(self):
+        """Clipboard monitoring tick"""
+        if not self.is_visible:
+            self._after_clipboard = None
+            return
+        self.update_clipboard_history()
+        self._after_clipboard = self.root.after(1000, self._clipboard_tick)
+    
+    def start_cursor(self):
+        """Start cursor animation"""
+        if self._after_cursor is not None:
+            return
+        self.animate_cursor()
+    
+    def stop_cursor(self):
+        """Stop cursor animation"""
+        if self._after_cursor is not None:
+            try:
+                self.root.after_cancel(self._after_cursor)
+            except Exception:
+                pass
+            self._after_cursor = None
     
     def animate_cursor(self):
         """Blinking cursor animation"""
+        if not self.is_visible:
+            self._after_cursor = None
+            return
         self.cursor_visible = not self.cursor_visible
         self.cursor_label.config(
             fg=self.colors['primary'] if self.cursor_visible else self.colors['bg']
         )
-        self.root.after(530, self.animate_cursor)
+        self._after_cursor = self.root.after(530, self.animate_cursor)
+    
+    def start_scanline(self):
+        """Start scanline animation"""
+        if self._after_scanline is not None:
+            return
+        self.animate_scanline()
+    
+    def stop_scanline(self):
+        """Stop scanline animation"""
+        if self._after_scanline is not None:
+            try:
+                self.root.after_cancel(self._after_scanline)
+            except Exception:
+                pass
+            self._after_scanline = None
     
     def animate_scanline(self):
         """Subtle scanline effect"""
+        if not self.is_visible:
+            self._after_scanline = None
+            return
         self.bg_canvas.delete("scanline")
         self.scan_line_y = (self.scan_line_y + 2) % max(1, self.root.winfo_height())
         self.bg_canvas.create_line(
@@ -734,7 +847,7 @@ class VomTools:
             fill='#1a1a1a', width=1, tags="scanline"
         )
         self.bg_canvas.tag_raise("scanline")
-        self.root.after(16, self.animate_scanline)
+        self._after_scanline = self.root.after(16, self.animate_scanline)
     
     def log(self, message, tag="success"):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -809,8 +922,9 @@ class VomTools:
                     cmd,
                     capture_output=True,
                     text=True,
-                    shell=True,
-                    timeout=300
+                    shell=False,
+                    timeout=300,
+                    creationflags=SUBPROCESS_FLAGS
                 )
                 self.root.after(0, lambda: self.handle_result(task, result))
             except subprocess.TimeoutExpired:
@@ -1272,8 +1386,6 @@ $results | ConvertTo-Json -Compress
         thread.start()
     
     def display_audio_devices(self, json_output, stderr=""):
-        import json
-        
         self.log("Audio playback devices:", "accent")
         
         if stderr:
@@ -1812,6 +1924,7 @@ $results | ConvertTo-Json -Depth 3 -Compress
         
         self.monitor_popup = popup
         self.monitor_running = True
+        self._after_monitor = None
         
         header = tk.Frame(popup, bg=self.colors['bg'])
         header.pack(fill=tk.X, padx=20, pady=(20, 10))
@@ -1905,6 +2018,12 @@ $results | ConvertTo-Json -Depth 3 -Compress
     
     def stop_monitor(self, popup):
         self.monitor_running = False
+        if hasattr(self, '_after_monitor') and self._after_monitor is not None:
+            try:
+                self.root.after_cancel(self._after_monitor)
+            except Exception:
+                pass
+            self._after_monitor = None
         popup.destroy()
         self.set_status("READY")
     
@@ -1966,7 +2085,7 @@ $procs = Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Id, 
         threading.Thread(target=get_stats, daemon=True).start()
         
         if self.monitor_running:
-            self.root.after(2000, self.update_system_monitor)
+            self._after_monitor = self.root.after(2000, self.update_system_monitor)
     
     def update_monitor_display(self, json_output):
         if not self.monitor_running:
