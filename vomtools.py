@@ -1497,17 +1497,31 @@ if ($result -eq 0) {{
         list_frame = tk.Frame(popup, bg=self.colors['bg'])
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
         
+        canvas = tk.Canvas(list_frame, bg=self.colors['bg'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview, style="Dark.Vertical.TScrollbar")
+        scrollable_frame = tk.Frame(canvas, bg=self.colors['bg'])
+        
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=350)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.bind_mousewheel(canvas)
+        
         for app in self.quick_launch_apps:
-            btn = tk.Frame(list_frame, bg=self.colors['bg_elevated'], cursor="hand2")
+            btn = tk.Frame(scrollable_frame, bg=self.colors['bg_elevated'], cursor="hand2")
             btn.pack(fill=tk.X, pady=2)
             
             content = tk.Frame(btn, bg=self.colors['bg_elevated'])
             content.pack(fill=tk.X, padx=12, pady=10)
             
-            tk.Label(content, text=app['icon'], font=self.small_font, fg=self.colors['primary'], bg=self.colors['bg_elevated'], width=3).pack(side=tk.LEFT)
-            tk.Label(content, text=app['name'], font=self.small_font, fg=self.colors['text'], bg=self.colors['bg_elevated'], anchor='w').pack(side=tk.LEFT, padx=(10, 0))
+            icon_lbl = tk.Label(content, text=app['icon'], font=self.small_font, fg=self.colors['primary'], bg=self.colors['bg_elevated'], width=3)
+            icon_lbl.pack(side=tk.LEFT)
+            name_lbl = tk.Label(content, text=app['name'], font=self.small_font, fg=self.colors['text'], bg=self.colors['bg_elevated'], anchor='w')
+            name_lbl.pack(side=tk.LEFT, padx=(10, 0))
             
-            widgets = [btn, content]
+            widgets = [btn, content, icon_lbl, name_lbl]
             
             def on_enter(e, w=widgets):
                 for widget in w:
@@ -1522,7 +1536,7 @@ if ($result -eq 0) {{
             def on_click(e, a=app, p=popup):
                 self.launch_app(a, p)
             
-            for w in [btn, content]:
+            for w in widgets:
                 w.bind("<Enter>", on_enter)
                 w.bind("<Leave>", on_leave)
                 w.bind("<Button-1>", on_click)
