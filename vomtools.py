@@ -325,6 +325,22 @@ class VomTools:
         self.cursor_visible = True
         self.animated_orb = None
         
+        # Clipboard history for clipboard manager
+        self.clipboard_history = []
+        self.last_clipboard = ""
+        
+        # Quick launcher apps (customizable)
+        self.quick_launch_apps = [
+            {"name": "Notepad", "path": "notepad.exe", "icon": "📝"},
+            {"name": "Calculator", "path": "calc.exe", "icon": "🔢"},
+            {"name": "Explorer", "path": "explorer.exe", "icon": "📁"},
+            {"name": "Task Manager", "path": "taskmgr.exe", "icon": "📊"},
+            {"name": "Command Prompt", "path": "cmd.exe", "icon": "⌨"},
+            {"name": "PowerShell", "path": "powershell.exe", "icon": "⚡"},
+            {"name": "Control Panel", "path": "control.exe", "icon": "⚙"},
+            {"name": "Settings", "path": "ms-settings:", "icon": "🔧"},
+        ]
+        
         # Define tasks
         self.tasks = [
             {
@@ -336,41 +352,64 @@ class VomTools:
                 "description": "Manage audio output"
             },
             {
-                "name": "Suspend Task",
+                "name": "Volume Mixer",
                 "key": "F2",
-                "icon": "◫",
-                "command": "__suspend_task__",
+                "icon": "◧",
+                "command": "__volume_mixer__",
                 "args": [],
-                "description": "Suspend/resume applications"
+                "description": "Per-app volume control"
             },
             {
-                "name": "GameDev Workspace",
+                "name": "Quick Launch",
                 "key": "F3",
                 "icon": "▶",
-                "command": "powershell.exe",
-                "args": ["-ExecutionPolicy", "Bypass", "-File", 
-                         os.path.expanduser("~/Desktop/LaunchGameDevWorkspace.ps1")],
-                "description": "Launch dev environment"
-            },
-            {
-                "name": "System Info",
-                "key": "F4",
-                "icon": "◈",
-                "command": "systeminfo",
+                "command": "__quick_launch__",
                 "args": [],
-                "description": "Display system specs"
+                "description": "Launch applications"
             },
             {
-                "name": "Network Status",
+                "name": "Clipboard",
+                "key": "F4",
+                "icon": "◫",
+                "command": "__clipboard__",
+                "args": [],
+                "description": "Clipboard history"
+            },
+            {
+                "name": "Network Info",
                 "key": "F5",
                 "icon": "◎",
-                "command": "ipconfig",
-                "args": ["/all"],
-                "description": "Network configuration"
+                "command": "__network_info__",
+                "args": [],
+                "description": "Network details & speed"
+            },
+            {
+                "name": "System Monitor",
+                "key": "F6",
+                "icon": "◈",
+                "command": "__system_monitor__",
+                "args": [],
+                "description": "CPU/RAM/Disk dashboard"
+            },
+            {
+                "name": "Process Killer",
+                "key": "F7",
+                "icon": "✕",
+                "command": "__process_killer__",
+                "args": [],
+                "description": "Kill processes"
+            },
+            {
+                "name": "Suspend Task",
+                "key": "F8",
+                "icon": "⏸",
+                "command": "__suspend_task__",
+                "args": [],
+                "description": "Suspend/resume apps"
             },
             {
                 "name": "Clear Console",
-                "key": "F6",
+                "key": "F9",
                 "icon": "◇",
                 "command": None,
                 "args": [],
@@ -386,6 +425,7 @@ class VomTools:
         self.setup_tray()
         self.bind_keys()
         self.start_animations()
+        self.start_clipboard_monitor()
         self.log_startup()
     
     def setup_scrollbar_style(self):
@@ -646,6 +686,13 @@ class VomTools:
         self.animate_cursor()
         self.animate_scanline()
     
+    def start_clipboard_monitor(self):
+        """Monitor clipboard for history"""
+        def monitor():
+            self.update_clipboard_history()
+            self.root.after(1000, monitor)
+        monitor()
+    
     def animate_cursor(self):
         """Blinking cursor animation"""
         self.cursor_visible = not self.cursor_visible
@@ -707,6 +754,30 @@ class VomTools:
         
         if task["command"] == "__suspend_task__":
             self.show_suspend_task()
+            return
+        
+        if task["command"] == "__volume_mixer__":
+            self.show_volume_mixer()
+            return
+        
+        if task["command"] == "__quick_launch__":
+            self.show_quick_launch()
+            return
+        
+        if task["command"] == "__clipboard__":
+            self.show_clipboard_manager()
+            return
+        
+        if task["command"] == "__network_info__":
+            self.show_network_info()
+            return
+        
+        if task["command"] == "__system_monitor__":
+            self.show_system_monitor()
+            return
+        
+        if task["command"] == "__process_killer__":
+            self.show_process_killer()
             return
         
         self.log(f"Executing: {task['name']}", "warn")
@@ -878,6 +949,17 @@ $results | ConvertTo-Json -Compress
         x = main_x + (main_w - width) // 2
         y = main_y + (main_h - height) // 2
         popup.geometry(f"{width}x{height}+{x}+{y}")
+        popup.bind("<Escape>", lambda e: popup.destroy())
+    
+    def bind_mousewheel(self, canvas):
+        """Bind mouse wheel scrolling to a canvas"""
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+        
+        def unbind_mousewheel(event=None):
+            canvas.unbind_all("<MouseWheel>")
+        canvas.bind("<Destroy>", unbind_mousewheel)
     
     def show_suspend_selector(self, processes):
         popup = tk.Toplevel(self.root)
@@ -925,6 +1007,7 @@ $results | ConvertTo-Json -Compress
         
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.bind_mousewheel(canvas)
         
         for proc in processes:
             name = proc.get('Name', 'Unknown')
@@ -1406,6 +1489,992 @@ if ($result -eq 0) {{
             if result.stderr:
                 self.log_raw(result.stderr.strip()[:100], "error")
             self.set_status("FAILED", True)
+
+    # ─── VOLUME MIXER ──────────────────────────────────────────────────────
+    def show_volume_mixer(self):
+        self.log("Scanning audio sessions...", "info")
+        self.set_status("SCANNING", is_warning=True)
+        
+        def scan():
+            try:
+                ps_script = '''
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+[Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ISimpleAudioVolume {
+    int GetMasterVolume(out float level);
+    int SetMasterVolume(float level, ref Guid eventContext);
+    int GetMute(out bool mute);
+    int SetMute(bool mute, ref Guid eventContext);
+}
+
+[Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionManager2 {
+    int QueryInterface();
+    int GetSessionEnumerator(out IAudioSessionEnumerator sessionEnum);
+}
+
+[Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionEnumerator {
+    int GetCount(out int sessionCount);
+    int GetSession(int sessionIndex, out IAudioSessionControl session);
+}
+
+[Guid("F4B1A599-7266-4319-A8CA-E70ACB11E8CD"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionControl {
+    int QueryInterface();
+    int QueryInterface2();
+    int QueryInterface3();
+    int QueryInterface4();
+    int QueryInterface5();
+    int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string displayName);
+}
+
+[Guid("BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionControl2 : IAudioSessionControl {
+    int QueryInterface();
+    int QueryInterface2();
+    int QueryInterface3();
+    int QueryInterface4();
+    int QueryInterface5();
+    int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string displayName);
+    int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string displayName, ref Guid eventContext);
+    int GetIconPath([MarshalAs(UnmanagedType.LPWStr)] out string iconPath);
+    int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string iconPath, ref Guid eventContext);
+    int GetGroupingParam(out Guid groupingId);
+    int SetGroupingParam(ref Guid groupingId, ref Guid eventContext);
+    int RegisterAudioSessionNotification(IntPtr client);
+    int UnregisterAudioSessionNotification(IntPtr client);
+    int GetSessionIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string sessionId);
+    int GetSessionInstanceIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string sessionInstanceId);
+    int GetProcessId(out uint processId);
+    int IsSystemSoundsSession();
+}
+"@ -ErrorAction SilentlyContinue
+
+$sessions = @()
+Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object {
+    try {
+        $audioSession = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue
+        if ($audioSession) {
+            $sessions += @{
+                "PID" = $_.Id
+                "Name" = $_.ProcessName
+                "Title" = $_.MainWindowTitle
+                "Volume" = 100
+            }
+        }
+    } catch {}
+}
+
+# Get actual audio sessions via PowerShell method
+$audioApps = @()
+try {
+    $wshell = New-Object -ComObject WScript.Shell
+    $procs = Get-Process | Where-Object { $_.MainWindowTitle -ne "" }
+    foreach ($p in $procs) {
+        $audioApps += @{
+            "PID" = $p.Id
+            "Name" = $p.ProcessName
+            "Title" = if ($p.MainWindowTitle.Length -gt 40) { $p.MainWindowTitle.Substring(0,40) + "..." } else { $p.MainWindowTitle }
+            "Volume" = 100
+        }
+    }
+} catch {}
+
+$audioApps | ConvertTo-Json -Compress
+'''
+                result = subprocess.run(
+                    ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
+                    capture_output=True, text=True, timeout=30,
+                    creationflags=SUBPROCESS_FLAGS
+                )
+                self.root.after(0, lambda: self.display_volume_mixer(result.stdout, result.stderr))
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"Error: {e}", "error"))
+                self.root.after(0, lambda: self.set_status("ERROR", True))
+        
+        thread = threading.Thread(target=scan, daemon=True)
+        thread.start()
+    
+    def display_volume_mixer(self, json_output, stderr=""):
+        self.log("Audio sessions:", "accent")
+        
+        try:
+            sessions = json.loads(json_output) if json_output.strip() else []
+            if not isinstance(sessions, list):
+                sessions = [sessions]
+            
+            if not sessions:
+                self.log_raw("No audio sessions found", "warn")
+                self.set_status("NO SESSIONS", True)
+                return
+            
+            for sess in sessions[:10]:
+                name = sess.get('Name', 'Unknown')
+                self.log_raw(f"[{sess.get('PID', 0)}] {name}", "success")
+            
+            self.show_volume_mixer_popup(sessions[:10])
+            self.set_status("ADJUST VOLUME")
+            
+        except json.JSONDecodeError:
+            self.log_raw("Could not parse session list", "error")
+            self.set_status("PARSE ERROR", True)
+    
+    def show_volume_mixer_popup(self, sessions):
+        popup = tk.Toplevel(self.root)
+        popup.configure(bg=self.colors['bg'])
+        popup.overrideredirect(True)
+        self.center_popup(popup, 500, 450)
+        popup.deiconify()
+        popup.lift()
+        popup.grab_set()
+        popup.focus_force()
+        
+        header = tk.Frame(popup, bg=self.colors['bg'])
+        header.pack(fill=tk.X, padx=20, pady=(20, 15))
+        
+        tk.Label(header, text="◧", font=self.tiny_font, fg=self.colors['primary'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        tk.Label(header, text=" VOLUME MIXER", font=self.tiny_font, fg=self.colors['text_dim'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        
+        list_frame = tk.Frame(popup, bg=self.colors['bg'])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
+        
+        canvas = tk.Canvas(list_frame, bg=self.colors['bg'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview, style="Dark.Vertical.TScrollbar")
+        scrollable_frame = tk.Frame(canvas, bg=self.colors['bg'])
+        
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=450)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.bind_mousewheel(canvas)
+        
+        self.volume_sliders = {}
+        
+        for sess in sessions:
+            name = sess.get('Name', 'Unknown')
+            pid = sess.get('PID', 0)
+            title = sess.get('Title', '')[:30]
+            
+            row = tk.Frame(scrollable_frame, bg=self.colors['bg_elevated'])
+            row.pack(fill=tk.X, pady=2, ipady=5)
+            
+            name_frame = tk.Frame(row, bg=self.colors['bg_elevated'])
+            name_frame.pack(fill=tk.X, padx=12, pady=5)
+            
+            tk.Label(name_frame, text=f"▸ {name}", font=self.small_font, fg=self.colors['text'], bg=self.colors['bg_elevated'], anchor='w').pack(side=tk.LEFT)
+            
+            vol_var = tk.IntVar(value=100)
+            self.volume_sliders[pid] = vol_var
+            
+            slider_frame = tk.Frame(row, bg=self.colors['bg_elevated'])
+            slider_frame.pack(fill=tk.X, padx=12, pady=(0, 5))
+            
+            slider = tk.Scale(
+                slider_frame,
+                from_=0, to=100,
+                orient=tk.HORIZONTAL,
+                variable=vol_var,
+                bg=self.colors['bg_elevated'],
+                fg=self.colors['primary'],
+                troughcolor=self.colors['bg'],
+                highlightthickness=0,
+                sliderrelief='flat',
+                length=300,
+                showvalue=True,
+                font=self.tiny_font,
+                command=lambda v, p=pid, n=name: self.set_app_volume(p, n, int(v))
+            )
+            slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            
+            mute_btn = tk.Label(slider_frame, text="🔇", font=self.small_font, fg=self.colors['text_muted'], bg=self.colors['bg_elevated'], cursor="hand2")
+            mute_btn.pack(side=tk.RIGHT, padx=(10, 0))
+            mute_btn.bind("<Button-1>", lambda e, s=slider: s.set(0))
+        
+        cancel_frame = tk.Frame(popup, bg=self.colors['bg'])
+        cancel_frame.pack(fill=tk.X, padx=20, pady=15)
+        
+        cancel_btn = tk.Label(cancel_frame, text="Close", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg'], cursor="hand2")
+        cancel_btn.pack(side=tk.RIGHT)
+        cancel_btn.bind("<Button-1>", lambda e: popup.destroy())
+        cancel_btn.bind("<Enter>", lambda e: cancel_btn.configure(fg=self.colors['primary']))
+        cancel_btn.bind("<Leave>", lambda e: cancel_btn.configure(fg=self.colors['text_muted']))
+    
+    def set_app_volume(self, pid, name, volume):
+        def do_set():
+            try:
+                ps_script = f'''
+$volume = {volume / 100.0}
+try {{
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+[Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ISimpleAudioVolume {{
+    int GetMasterVolume(out float pfLevel);
+    int SetMasterVolume(float fLevel, ref Guid EventContext);
+    int GetMute(out bool pbMute);
+    int SetMute(bool bMute, ref Guid EventContext);
+}}
+
+[Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionManager2 {{
+    int NotImpl1();
+    int NotImpl2();
+    int GetSessionEnumerator(out IAudioSessionEnumerator SessionEnum);
+}}
+
+[Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionEnumerator {{
+    int GetCount(out int SessionCount);
+    int GetSession(int SessionCount, out IAudioSessionControl2 Session);
+}}
+
+[Guid("bfb7ff88-7239-4fc9-8fa2-07c950be9c6d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionControl2 {{
+    int NotImpl1();
+    int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+    int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string Value, [MarshalAs(UnmanagedType.LPStruct)] Guid EventContext);
+    int GetIconPath([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+    int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string Value, [MarshalAs(UnmanagedType.LPStruct)] Guid EventContext);
+    int GetGroupingParam(out Guid pRetVal);
+    int SetGroupingParam([MarshalAs(UnmanagedType.LPStruct)] Guid Override, [MarshalAs(UnmanagedType.LPStruct)] Guid EventContext);
+    int NotImpl2();
+    int NotImpl3();
+    int GetSessionIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+    int GetSessionInstanceIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+    int GetProcessId(out int pRetVal);
+    int IsSystemSoundsSession();
+    int SetDuckingPreference(bool optOut);
+}}
+
+[Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+class MMDeviceEnumerator {{}}
+
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumerator {{
+    int NotImpl1();
+    int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice);
+}}
+
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDevice {{
+    int Activate(ref Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
+}}
+
+public class AudioManager {{
+    public static void SetVolume(int pid, float volume) {{
+        var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
+        IMMDevice device;
+        enumerator.GetDefaultAudioEndpoint(0, 1, out device);
+        Guid IID_IAudioSessionManager2 = typeof(IAudioSessionManager2).GUID;
+        object o;
+        device.Activate(ref IID_IAudioSessionManager2, 0, IntPtr.Zero, out o);
+        var mgr = (IAudioSessionManager2)o;
+        IAudioSessionEnumerator sessionEnumerator;
+        mgr.GetSessionEnumerator(out sessionEnumerator);
+        int count;
+        sessionEnumerator.GetCount(out count);
+        for (int i = 0; i < count; i++) {{
+            IAudioSessionControl2 ctl;
+            sessionEnumerator.GetSession(i, out ctl);
+            int sessionPid;
+            ctl.GetProcessId(out sessionPid);
+            if (sessionPid == pid) {{
+                var vol = (ISimpleAudioVolume)ctl;
+                Guid guid = Guid.Empty;
+                vol.SetMasterVolume(volume, ref guid);
+                break;
+            }}
+        }}
+    }}
+}}
+"@ -ErrorAction SilentlyContinue
+    [AudioManager]::SetVolume({pid}, $volume)
+    Write-Output "SUCCESS"
+}} catch {{
+    Write-Output "FALLBACK"
+}}
+'''
+                subprocess.run(
+                    ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=SUBPROCESS_FLAGS
+                )
+            except:
+                pass
+        
+        threading.Thread(target=do_set, daemon=True).start()
+
+    # ─── QUICK LAUNCHER ────────────────────────────────────────────────────
+    def show_quick_launch(self):
+        self.log("Quick Launcher", "accent")
+        self.set_status("SELECT APP")
+        
+        popup = tk.Toplevel(self.root)
+        popup.configure(bg=self.colors['bg'])
+        popup.overrideredirect(True)
+        self.center_popup(popup, 400, 420)
+        popup.deiconify()
+        popup.lift()
+        popup.grab_set()
+        popup.focus_force()
+        
+        header = tk.Frame(popup, bg=self.colors['bg'])
+        header.pack(fill=tk.X, padx=20, pady=(20, 15))
+        
+        tk.Label(header, text="▶", font=self.tiny_font, fg=self.colors['primary'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        tk.Label(header, text=" QUICK LAUNCHER", font=self.tiny_font, fg=self.colors['text_dim'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        
+        list_frame = tk.Frame(popup, bg=self.colors['bg'])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
+        
+        for app in self.quick_launch_apps:
+            btn = tk.Frame(list_frame, bg=self.colors['bg_elevated'], cursor="hand2")
+            btn.pack(fill=tk.X, pady=2)
+            
+            content = tk.Frame(btn, bg=self.colors['bg_elevated'])
+            content.pack(fill=tk.X, padx=12, pady=10)
+            
+            tk.Label(content, text=app['icon'], font=self.small_font, fg=self.colors['primary'], bg=self.colors['bg_elevated'], width=3).pack(side=tk.LEFT)
+            tk.Label(content, text=app['name'], font=self.small_font, fg=self.colors['text'], bg=self.colors['bg_elevated'], anchor='w').pack(side=tk.LEFT, padx=(10, 0))
+            
+            widgets = [btn, content]
+            
+            def on_enter(e, w=widgets):
+                for widget in w:
+                    try: widget.configure(bg=self.colors['bg_hover'])
+                    except: pass
+            
+            def on_leave(e, w=widgets):
+                for widget in w:
+                    try: widget.configure(bg=self.colors['bg_elevated'])
+                    except: pass
+            
+            def on_click(e, a=app, p=popup):
+                self.launch_app(a, p)
+            
+            for w in [btn, content]:
+                w.bind("<Enter>", on_enter)
+                w.bind("<Leave>", on_leave)
+                w.bind("<Button-1>", on_click)
+        
+        cancel_frame = tk.Frame(popup, bg=self.colors['bg'])
+        cancel_frame.pack(fill=tk.X, padx=20, pady=15)
+        
+        cancel_btn = tk.Label(cancel_frame, text="Cancel", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg'], cursor="hand2")
+        cancel_btn.pack(side=tk.RIGHT)
+        cancel_btn.bind("<Button-1>", lambda e: popup.destroy())
+        cancel_btn.bind("<Enter>", lambda e: cancel_btn.configure(fg=self.colors['error']))
+        cancel_btn.bind("<Leave>", lambda e: cancel_btn.configure(fg=self.colors['text_muted']))
+    
+    def launch_app(self, app, popup):
+        popup.destroy()
+        self.log(f"Launching: {app['name']}", "warn")
+        self.set_status("LAUNCHING", is_warning=True)
+        
+        def run():
+            try:
+                if app['path'].startswith('ms-'):
+                    os.startfile(app['path'])
+                else:
+                    subprocess.Popen(app['path'], creationflags=SUBPROCESS_FLAGS)
+                self.root.after(0, lambda: self.log(f"Launched: {app['name']}", "accent"))
+                self.root.after(0, lambda: self.set_status("READY"))
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"Error: {e}", "error"))
+                self.root.after(0, lambda: self.set_status("FAILED", True))
+        
+        threading.Thread(target=run, daemon=True).start()
+
+    # ─── CLIPBOARD MANAGER ─────────────────────────────────────────────────
+    def show_clipboard_manager(self):
+        self.log("Clipboard Manager", "accent")
+        self.update_clipboard_history()
+        self.set_status("SELECT ITEM")
+        
+        popup = tk.Toplevel(self.root)
+        popup.configure(bg=self.colors['bg'])
+        popup.overrideredirect(True)
+        self.center_popup(popup, 500, 450)
+        popup.deiconify()
+        popup.lift()
+        popup.grab_set()
+        popup.focus_force()
+        
+        header = tk.Frame(popup, bg=self.colors['bg'])
+        header.pack(fill=tk.X, padx=20, pady=(20, 15))
+        
+        tk.Label(header, text="◫", font=self.tiny_font, fg=self.colors['primary'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        tk.Label(header, text=" CLIPBOARD HISTORY", font=self.tiny_font, fg=self.colors['text_dim'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        
+        list_frame = tk.Frame(popup, bg=self.colors['bg'])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
+        
+        canvas = tk.Canvas(list_frame, bg=self.colors['bg'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview, style="Dark.Vertical.TScrollbar")
+        scrollable_frame = tk.Frame(canvas, bg=self.colors['bg'])
+        
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=450)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.bind_mousewheel(canvas)
+        
+        if not self.clipboard_history:
+            tk.Label(scrollable_frame, text="No clipboard history", font=self.small_font, fg=self.colors['text_muted'], bg=self.colors['bg']).pack(pady=20)
+        else:
+            for i, item in enumerate(self.clipboard_history[:20]):
+                preview = item[:60] + "..." if len(item) > 60 else item
+                preview = preview.replace('\n', ' ').replace('\r', '')
+                
+                btn = tk.Frame(scrollable_frame, bg=self.colors['bg_elevated'], cursor="hand2")
+                btn.pack(fill=tk.X, pady=2)
+                
+                content = tk.Frame(btn, bg=self.colors['bg_elevated'])
+                content.pack(fill=tk.X, padx=12, pady=8)
+                
+                num_lbl = tk.Label(content, text=f"{i+1}", font=self.tiny_font, fg=self.colors['primary'], bg=self.colors['bg_elevated'], width=2)
+                num_lbl.pack(side=tk.LEFT)
+                
+                text_lbl = tk.Label(content, text=preview, font=self.small_font, fg=self.colors['text'], bg=self.colors['bg_elevated'], anchor='w')
+                text_lbl.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
+                
+                widgets = [btn, content, num_lbl, text_lbl]
+                
+                def on_enter(e, w=widgets):
+                    for widget in w:
+                        widget.configure(bg=self.colors['bg_hover'])
+                
+                def on_leave(e, w=widgets):
+                    for widget in w:
+                        widget.configure(bg=self.colors['bg_elevated'])
+                
+                def on_click(e, text=item, p=popup):
+                    self.paste_from_history(text, p)
+                
+                for w in widgets:
+                    w.bind("<Enter>", on_enter)
+                    w.bind("<Leave>", on_leave)
+                    w.bind("<Button-1>", on_click)
+        
+        btn_frame = tk.Frame(popup, bg=self.colors['bg'])
+        btn_frame.pack(fill=tk.X, padx=20, pady=15)
+        
+        clear_btn = tk.Label(btn_frame, text="Clear All", font=self.tiny_font, fg=self.colors['error'], bg=self.colors['bg'], cursor="hand2")
+        clear_btn.pack(side=tk.LEFT)
+        clear_btn.bind("<Button-1>", lambda e: self.clear_clipboard_history(popup))
+        
+        cancel_btn = tk.Label(btn_frame, text="Close", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg'], cursor="hand2")
+        cancel_btn.pack(side=tk.RIGHT)
+        cancel_btn.bind("<Button-1>", lambda e: popup.destroy())
+    
+    def update_clipboard_history(self):
+        try:
+            current = self.root.clipboard_get()
+            if current and current != self.last_clipboard:
+                self.last_clipboard = current
+                if current not in self.clipboard_history:
+                    self.clipboard_history.insert(0, current)
+                    if len(self.clipboard_history) > 50:
+                        self.clipboard_history = self.clipboard_history[:50]
+        except:
+            pass
+    
+    def paste_from_history(self, text, popup):
+        popup.destroy()
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.log(f"Copied: {text[:40]}...", "accent")
+        self.set_status("COPIED")
+    
+    def clear_clipboard_history(self, popup):
+        self.clipboard_history = []
+        popup.destroy()
+        self.log("Clipboard history cleared", "info")
+        self.set_status("READY")
+
+    # ─── NETWORK INFO ──────────────────────────────────────────────────────
+    def show_network_info(self):
+        self.log("Gathering network info...", "info")
+        self.set_status("SCANNING", is_warning=True)
+        
+        def scan():
+            try:
+                ps_script = '''
+$results = @{}
+
+# Get network adapters
+$adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object Name, InterfaceDescription, MacAddress, LinkSpeed
+
+# Get IP configuration
+$ipConfigs = Get-NetIPAddress | Where-Object { $_.AddressFamily -eq "IPv4" -and $_.IPAddress -ne "127.0.0.1" }
+
+# Get default gateway
+$gateway = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop
+
+# Get DNS servers
+$dns = (Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses } | Select-Object -First 1).ServerAddresses -join ", "
+
+# Get public IP
+try {
+    $publicIP = (Invoke-RestMethod -Uri "https://api.ipify.org?format=json" -TimeoutSec 5).ip
+} catch {
+    $publicIP = "Unable to fetch"
+}
+
+# Network stats
+$stats = Get-NetAdapterStatistics | Select-Object -First 1
+
+$results = @{
+    "Adapters" = @($adapters | ForEach-Object { @{ "Name" = $_.Name; "Desc" = $_.InterfaceDescription; "MAC" = $_.MacAddress; "Speed" = $_.LinkSpeed } })
+    "IPs" = @($ipConfigs | ForEach-Object { @{ "IP" = $_.IPAddress; "Prefix" = $_.PrefixLength; "Interface" = $_.InterfaceAlias } })
+    "Gateway" = $gateway
+    "DNS" = $dns
+    "PublicIP" = $publicIP
+    "BytesSent" = if ($stats) { $stats.SentBytes } else { 0 }
+    "BytesRecv" = if ($stats) { $stats.ReceivedBytes } else { 0 }
+}
+
+$results | ConvertTo-Json -Depth 3 -Compress
+'''
+                result = subprocess.run(
+                    ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
+                    capture_output=True, text=True, timeout=30,
+                    creationflags=SUBPROCESS_FLAGS
+                )
+                self.root.after(0, lambda: self.display_network_info(result.stdout, result.stderr))
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"Error: {e}", "error"))
+                self.root.after(0, lambda: self.set_status("ERROR", True))
+        
+        threading.Thread(target=scan, daemon=True).start()
+    
+    def display_network_info(self, json_output, stderr=""):
+        try:
+            data = json.loads(json_output) if json_output.strip() else {}
+            
+            self.log("Network Information:", "accent")
+            
+            # Public IP
+            public_ip = data.get('PublicIP', 'N/A')
+            self.log_raw(f"Public IP: {public_ip}", "success")
+            
+            # Gateway
+            gateway = data.get('Gateway', 'N/A')
+            self.log_raw(f"Gateway: {gateway}", "success")
+            
+            # DNS
+            dns = data.get('DNS', 'N/A')
+            self.log_raw(f"DNS: {dns}", "success")
+            
+            # Local IPs
+            ips = data.get('IPs', [])
+            for ip_info in ips:
+                self.log_raw(f"Local IP: {ip_info.get('IP', 'N/A')}/{ip_info.get('Prefix', '')} ({ip_info.get('Interface', '')})", "info")
+            
+            # Adapters
+            adapters = data.get('Adapters', [])
+            for adapter in adapters:
+                self.log_raw(f"Adapter: {adapter.get('Name', 'N/A')} @ {adapter.get('Speed', 'N/A')}", "dim")
+            
+            # Traffic stats
+            sent = data.get('BytesSent', 0)
+            recv = data.get('BytesRecv', 0)
+            sent_mb = sent / (1024 * 1024)
+            recv_mb = recv / (1024 * 1024)
+            self.log_raw(f"Traffic: ↑{sent_mb:.1f}MB ↓{recv_mb:.1f}MB", "warn")
+            
+            self.set_status("READY")
+            
+        except json.JSONDecodeError:
+            self.log_raw("Could not parse network info", "error")
+            self.set_status("PARSE ERROR", True)
+
+    # ─── SYSTEM MONITOR (htop-style) ───────────────────────────────────────
+    def show_system_monitor(self):
+        self.log("System Monitor", "accent")
+        self.set_status("MONITORING")
+        
+        popup = tk.Toplevel(self.root)
+        popup.configure(bg=self.colors['bg'])
+        popup.overrideredirect(True)
+        self.center_popup(popup, 600, 500)
+        popup.deiconify()
+        popup.lift()
+        popup.grab_set()
+        popup.focus_force()
+        
+        self.monitor_popup = popup
+        self.monitor_running = True
+        
+        header = tk.Frame(popup, bg=self.colors['bg'])
+        header.pack(fill=tk.X, padx=20, pady=(20, 10))
+        
+        tk.Label(header, text="◈", font=self.tiny_font, fg=self.colors['primary'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        tk.Label(header, text=" SYSTEM MONITOR", font=self.tiny_font, fg=self.colors['text_dim'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        
+        # CPU Section
+        cpu_frame = tk.Frame(popup, bg=self.colors['bg'])
+        cpu_frame.pack(fill=tk.X, padx=20, pady=5)
+        
+        tk.Label(cpu_frame, text="CPU", font=self.small_font, fg=self.colors['secondary'], bg=self.colors['bg'], width=6, anchor='w').pack(side=tk.LEFT)
+        
+        self.cpu_bar_canvas = tk.Canvas(cpu_frame, height=20, bg=self.colors['bg'], highlightthickness=0)
+        self.cpu_bar_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 10))
+        
+        self.cpu_label = tk.Label(cpu_frame, text="0%", font=self.small_font, fg=self.colors['primary'], bg=self.colors['bg'], width=6)
+        self.cpu_label.pack(side=tk.RIGHT)
+        
+        # RAM Section
+        ram_frame = tk.Frame(popup, bg=self.colors['bg'])
+        ram_frame.pack(fill=tk.X, padx=20, pady=5)
+        
+        tk.Label(ram_frame, text="RAM", font=self.small_font, fg=self.colors['secondary'], bg=self.colors['bg'], width=6, anchor='w').pack(side=tk.LEFT)
+        
+        self.ram_bar_canvas = tk.Canvas(ram_frame, height=20, bg=self.colors['bg'], highlightthickness=0)
+        self.ram_bar_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 10))
+        
+        self.ram_label = tk.Label(ram_frame, text="0%", font=self.small_font, fg=self.colors['primary'], bg=self.colors['bg'], width=6)
+        self.ram_label.pack(side=tk.RIGHT)
+        
+        # Disk Section
+        disk_frame = tk.Frame(popup, bg=self.colors['bg'])
+        disk_frame.pack(fill=tk.X, padx=20, pady=5)
+        
+        tk.Label(disk_frame, text="DISK", font=self.small_font, fg=self.colors['secondary'], bg=self.colors['bg'], width=6, anchor='w').pack(side=tk.LEFT)
+        
+        self.disk_bar_canvas = tk.Canvas(disk_frame, height=20, bg=self.colors['bg'], highlightthickness=0)
+        self.disk_bar_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 10))
+        
+        self.disk_label = tk.Label(disk_frame, text="0%", font=self.small_font, fg=self.colors['primary'], bg=self.colors['bg'], width=6)
+        self.disk_label.pack(side=tk.RIGHT)
+        
+        # Separator
+        tk.Frame(popup, bg=self.colors['border'], height=1).pack(fill=tk.X, padx=20, pady=15)
+        
+        # Top Processes
+        proc_header = tk.Frame(popup, bg=self.colors['bg'])
+        proc_header.pack(fill=tk.X, padx=20)
+        
+        tk.Label(proc_header, text="TOP PROCESSES", font=self.tiny_font, fg=self.colors['text_dim'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        
+        self.proc_frame = tk.Frame(popup, bg=self.colors['bg'])
+        self.proc_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Process list header
+        header_row = tk.Frame(self.proc_frame, bg=self.colors['bg'])
+        header_row.pack(fill=tk.X)
+        tk.Label(header_row, text="PID", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg'], width=8, anchor='w').pack(side=tk.LEFT)
+        tk.Label(header_row, text="NAME", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg'], width=20, anchor='w').pack(side=tk.LEFT)
+        tk.Label(header_row, text="CPU%", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg'], width=8, anchor='e').pack(side=tk.LEFT)
+        tk.Label(header_row, text="MEM%", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg'], width=8, anchor='e').pack(side=tk.LEFT)
+        
+        self.proc_rows = []
+        for i in range(8):
+            row = tk.Frame(self.proc_frame, bg=self.colors['bg'])
+            row.pack(fill=tk.X, pady=1)
+            pid_lbl = tk.Label(row, text="", font=self.small_font, fg=self.colors['text_dim'], bg=self.colors['bg'], width=8, anchor='w')
+            pid_lbl.pack(side=tk.LEFT)
+            name_lbl = tk.Label(row, text="", font=self.small_font, fg=self.colors['text'], bg=self.colors['bg'], width=20, anchor='w')
+            name_lbl.pack(side=tk.LEFT)
+            cpu_lbl = tk.Label(row, text="", font=self.small_font, fg=self.colors['warning'], bg=self.colors['bg'], width=8, anchor='e')
+            cpu_lbl.pack(side=tk.LEFT)
+            mem_lbl = tk.Label(row, text="", font=self.small_font, fg=self.colors['secondary'], bg=self.colors['bg'], width=8, anchor='e')
+            mem_lbl.pack(side=tk.LEFT)
+            self.proc_rows.append((pid_lbl, name_lbl, cpu_lbl, mem_lbl))
+        
+        # Close button
+        btn_frame = tk.Frame(popup, bg=self.colors['bg'])
+        btn_frame.pack(fill=tk.X, padx=20, pady=15)
+        
+        close_btn = tk.Label(btn_frame, text="Close", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg'], cursor="hand2")
+        close_btn.pack(side=tk.RIGHT)
+        close_btn.bind("<Button-1>", lambda e: self.stop_monitor(popup))
+        close_btn.bind("<Enter>", lambda e: close_btn.configure(fg=self.colors['primary']))
+        close_btn.bind("<Leave>", lambda e: close_btn.configure(fg=self.colors['text_muted']))
+        
+        popup.protocol("WM_DELETE_WINDOW", lambda: self.stop_monitor(popup))
+        
+        self.update_system_monitor()
+    
+    def stop_monitor(self, popup):
+        self.monitor_running = False
+        popup.destroy()
+        self.set_status("READY")
+    
+    def draw_bar(self, canvas, percent, color):
+        canvas.delete("all")
+        canvas.update_idletasks()
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        
+        # Background
+        canvas.create_rectangle(0, 0, width, height, fill=self.colors['bg_elevated'], outline="")
+        
+        # Filled bar
+        fill_width = int((percent / 100) * width)
+        if fill_width > 0:
+            # Gradient effect with blocks
+            block_width = 4
+            for i in range(0, fill_width, block_width + 1):
+                intensity = 0.5 + (i / width) * 0.5
+                canvas.create_rectangle(i, 2, min(i + block_width, fill_width), height - 2, fill=color, outline="")
+    
+    def update_system_monitor(self):
+        if not self.monitor_running:
+            return
+        
+        def get_stats():
+            try:
+                ps_script = '''
+$cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
+$os = Get-CimInstance Win32_OperatingSystem
+$ramUsed = [math]::Round((($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize) * 100, 1)
+$ramTotal = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
+$ramUsedGB = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 1)
+
+$disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+$diskUsed = [math]::Round((($disk.Size - $disk.FreeSpace) / $disk.Size) * 100, 1)
+
+$procs = Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Id, ProcessName, @{N='CPU';E={[math]::Round($_.CPU,1)}}, @{N='Mem';E={[math]::Round($_.WorkingSet64/1MB,1)}}
+
+@{
+    "CPU" = $cpu
+    "RAM" = $ramUsed
+    "RAMUsed" = $ramUsedGB
+    "RAMTotal" = $ramTotal
+    "Disk" = $diskUsed
+    "Procs" = @($procs | ForEach-Object { @{ "PID" = $_.Id; "Name" = $_.ProcessName; "CPU" = $_.CPU; "Mem" = $_.Mem } })
+} | ConvertTo-Json -Depth 3 -Compress
+'''
+                result = subprocess.run(
+                    ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=SUBPROCESS_FLAGS
+                )
+                if result.stdout:
+                    self.root.after(0, lambda: self.update_monitor_display(result.stdout))
+            except:
+                pass
+        
+        threading.Thread(target=get_stats, daemon=True).start()
+        
+        if self.monitor_running:
+            self.root.after(2000, self.update_system_monitor)
+    
+    def update_monitor_display(self, json_output):
+        if not self.monitor_running:
+            return
+        
+        try:
+            data = json.loads(json_output)
+            
+            cpu = data.get('CPU', 0) or 0
+            ram = data.get('RAM', 0) or 0
+            disk = data.get('Disk', 0) or 0
+            ram_used = data.get('RAMUsed', 0)
+            ram_total = data.get('RAMTotal', 0)
+            
+            # Update bars
+            self.draw_bar(self.cpu_bar_canvas, cpu, self.colors['primary'])
+            self.draw_bar(self.ram_bar_canvas, ram, self.colors['secondary'])
+            self.draw_bar(self.disk_bar_canvas, disk, self.colors['warning'])
+            
+            # Update labels
+            self.cpu_label.config(text=f"{cpu:.0f}%")
+            self.ram_label.config(text=f"{ram:.0f}%")
+            self.disk_label.config(text=f"{disk:.0f}%")
+            
+            # Update processes
+            procs = data.get('Procs', [])
+            for i, (pid_lbl, name_lbl, cpu_lbl, mem_lbl) in enumerate(self.proc_rows):
+                if i < len(procs):
+                    p = procs[i]
+                    pid_lbl.config(text=str(p.get('PID', '')))
+                    name_lbl.config(text=p.get('Name', '')[:18])
+                    cpu_lbl.config(text=f"{p.get('CPU', 0):.1f}")
+                    mem_lbl.config(text=f"{p.get('Mem', 0):.0f}MB")
+                else:
+                    pid_lbl.config(text="")
+                    name_lbl.config(text="")
+                    cpu_lbl.config(text="")
+                    mem_lbl.config(text="")
+        except:
+            pass
+
+    # ─── PROCESS KILLER ────────────────────────────────────────────────────
+    def show_process_killer(self):
+        self.log("Scanning processes...", "info")
+        self.set_status("SCANNING", is_warning=True)
+        
+        def scan():
+            try:
+                ps_script = '''
+$procs = Get-Process | Where-Object { $_.MainWindowTitle -ne "" -or $_.CPU -gt 10 } | 
+    Sort-Object CPU -Descending | 
+    Select-Object -First 30 Id, ProcessName, @{N='CPU';E={[math]::Round($_.CPU,1)}}, @{N='Mem';E={[math]::Round($_.WorkingSet64/1MB,0)}}, MainWindowTitle
+
+$procs | ForEach-Object {
+    @{
+        "PID" = $_.Id
+        "Name" = $_.ProcessName
+        "CPU" = $_.CPU
+        "Mem" = $_.Mem
+        "Title" = if ($_.MainWindowTitle) { $_.MainWindowTitle.Substring(0, [Math]::Min(40, $_.MainWindowTitle.Length)) } else { "" }
+    }
+} | ConvertTo-Json -Compress
+'''
+                result = subprocess.run(
+                    ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
+                    capture_output=True, text=True, timeout=30,
+                    creationflags=SUBPROCESS_FLAGS
+                )
+                self.root.after(0, lambda: self.display_process_killer(result.stdout))
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"Error: {e}", "error"))
+                self.root.after(0, lambda: self.set_status("ERROR", True))
+        
+        threading.Thread(target=scan, daemon=True).start()
+    
+    def display_process_killer(self, json_output):
+        try:
+            procs = json.loads(json_output) if json_output.strip() else []
+            if not isinstance(procs, list):
+                procs = [procs]
+            
+            if not procs:
+                self.log_raw("No killable processes found", "warn")
+                self.set_status("NO PROCESSES", True)
+                return
+            
+            self.show_process_killer_popup(procs)
+            self.set_status("SELECT PROCESS")
+            
+        except json.JSONDecodeError:
+            self.log_raw("Could not parse process list", "error")
+            self.set_status("PARSE ERROR", True)
+    
+    def show_process_killer_popup(self, processes):
+        popup = tk.Toplevel(self.root)
+        popup.configure(bg=self.colors['bg'])
+        popup.overrideredirect(True)
+        self.center_popup(popup, 550, 480)
+        popup.deiconify()
+        popup.lift()
+        popup.grab_set()
+        popup.focus_force()
+        
+        header = tk.Frame(popup, bg=self.colors['bg'])
+        header.pack(fill=tk.X, padx=20, pady=(20, 10))
+        
+        tk.Label(header, text="✕", font=self.tiny_font, fg=self.colors['error'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        tk.Label(header, text=" PROCESS KILLER", font=self.tiny_font, fg=self.colors['text_dim'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        
+        tk.Label(header, text="⚠ Click to kill", font=self.tiny_font, fg=self.colors['warning'], bg=self.colors['bg']).pack(side=tk.RIGHT)
+        
+        list_frame = tk.Frame(popup, bg=self.colors['bg'])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
+        
+        canvas = tk.Canvas(list_frame, bg=self.colors['bg'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview, style="Dark.Vertical.TScrollbar")
+        scrollable_frame = tk.Frame(canvas, bg=self.colors['bg'])
+        
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=500)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.bind_mousewheel(canvas)
+        
+        for proc in processes:
+            pid = proc.get('PID', 0)
+            name = proc.get('Name', 'Unknown')
+            cpu = proc.get('CPU', 0)
+            mem = proc.get('Mem', 0)
+            title = proc.get('Title', '')
+            
+            btn = tk.Frame(scrollable_frame, bg=self.colors['bg_elevated'], cursor="hand2")
+            btn.pack(fill=tk.X, pady=1)
+            
+            content = tk.Frame(btn, bg=self.colors['bg_elevated'])
+            content.pack(fill=tk.X, padx=10, pady=6)
+            
+            pid_lbl = tk.Label(content, text=f"{pid}", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg_elevated'], width=6, anchor='w')
+            pid_lbl.pack(side=tk.LEFT)
+            
+            name_lbl = tk.Label(content, text=name[:15], font=self.small_font, fg=self.colors['text'], bg=self.colors['bg_elevated'], width=15, anchor='w')
+            name_lbl.pack(side=tk.LEFT)
+            
+            cpu_lbl = tk.Label(content, text=f"CPU:{cpu:.0f}", font=self.tiny_font, fg=self.colors['warning'], bg=self.colors['bg_elevated'], width=8)
+            cpu_lbl.pack(side=tk.LEFT)
+            
+            mem_lbl = tk.Label(content, text=f"MEM:{mem}MB", font=self.tiny_font, fg=self.colors['secondary'], bg=self.colors['bg_elevated'], width=10)
+            mem_lbl.pack(side=tk.LEFT)
+            
+            widgets = [btn, content, pid_lbl, name_lbl, cpu_lbl, mem_lbl]
+            
+            def on_enter(e, w=widgets):
+                for widget in w:
+                    widget.configure(bg=self.colors['bg_hover'])
+            
+            def on_leave(e, w=widgets):
+                for widget in w:
+                    widget.configure(bg=self.colors['bg_elevated'])
+            
+            def on_click(e, p=proc, pop=popup):
+                self.kill_process(p, pop)
+            
+            for w in widgets:
+                w.bind("<Enter>", on_enter)
+                w.bind("<Leave>", on_leave)
+                w.bind("<Button-1>", on_click)
+        
+        btn_frame = tk.Frame(popup, bg=self.colors['bg'])
+        btn_frame.pack(fill=tk.X, padx=20, pady=15)
+        
+        cancel_btn = tk.Label(btn_frame, text="Cancel", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg'], cursor="hand2")
+        cancel_btn.pack(side=tk.RIGHT)
+        cancel_btn.bind("<Button-1>", lambda e: popup.destroy())
+        cancel_btn.bind("<Enter>", lambda e: cancel_btn.configure(fg=self.colors['error']))
+        cancel_btn.bind("<Leave>", lambda e: cancel_btn.configure(fg=self.colors['text_muted']))
+    
+    def kill_process(self, proc, popup):
+        popup.destroy()
+        
+        pid = proc.get('PID', 0)
+        name = proc.get('Name', 'Unknown')
+        
+        self.log(f"Killing: {name} (PID: {pid})", "warn")
+        self.set_status("KILLING", is_warning=True)
+        
+        def do_kill():
+            try:
+                result = subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=SUBPROCESS_FLAGS
+                )
+                if result.returncode == 0:
+                    self.root.after(0, lambda: self.log(f"Killed: {name}", "accent"))
+                    self.root.after(0, lambda: self.set_status("READY"))
+                else:
+                    self.root.after(0, lambda: self.log(f"Failed to kill: {name}", "error"))
+                    self.root.after(0, lambda: self.set_status("FAILED", True))
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"Error: {e}", "error"))
+                self.root.after(0, lambda: self.set_status("ERROR", True))
+        
+        threading.Thread(target=do_kill, daemon=True).start()
 
 
 def main():
