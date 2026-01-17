@@ -8,6 +8,9 @@ import random
 import sys
 import math
 import json
+import pystray
+from PIL import Image
+import keyboard
 
 # Hide PowerShell windows on Windows
 SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
@@ -359,7 +362,11 @@ class VomTools:
             }
         ]
         
+        self.tray_icon = None
+        self.is_visible = True
+        
         self.setup_ui()
+        self.setup_tray()
         self.bind_keys()
         self.start_animations()
         self.log_startup()
@@ -494,7 +501,7 @@ class VomTools:
         # ESC hint
         self.esc_hint = tk.Label(
             self.root,
-            text="ESC exit",
+            text="ESC hide  |  Ctrl+NumDel toggle",
             font=self.tiny_font,
             fg=self.colors['text_muted'],
             bg=canvas_bg
@@ -537,10 +544,51 @@ class VomTools:
         btn.bind("<Leave>", on_leave)
         btn.bind("<Button-1>", on_click)
     
+    def setup_tray(self):
+        icon_path = os.path.join(os.path.dirname(__file__), 'vomtools.ico')
+        if os.path.exists(icon_path):
+            image = Image.open(icon_path)
+        else:
+            image = Image.new('RGB', (64, 64), color='#00ff9f')
+        
+        menu = pystray.Menu(
+            pystray.MenuItem("Show/Hide", self.toggle_visibility, default=True),
+            pystray.MenuItem("Quit", self.quit_app)
+        )
+        
+        self.tray_icon = pystray.Icon("VomTools", image, "VomTools", menu)
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+        
+        keyboard.add_hotkey('ctrl+decimal', self.on_global_hotkey)
+    
+    def on_global_hotkey(self):
+        self.root.after(0, self.toggle_visibility)
+    
+    def toggle_visibility(self, icon=None, item=None):
+        if self.is_visible:
+            self.hide_to_tray()
+        else:
+            self.show_from_tray()
+    
+    def hide_to_tray(self):
+        self.is_visible = False
+        self.root.withdraw()
+    
+    def show_from_tray(self):
+        self.is_visible = True
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+    
+    def quit_app(self, icon=None, item=None):
+        if self.tray_icon:
+            self.tray_icon.stop()
+        self.root.quit()
+    
     def bind_keys(self):
         for task in self.tasks:
             self.root.bind(f"<{task['key']}>", lambda e, t=task: self.execute_task(t))
-        self.root.bind("<Escape>", lambda e: self.root.quit())
+        self.root.bind("<Escape>", lambda e: self.hide_to_tray())
     
     def start_animations(self):
         """Start background animations"""
