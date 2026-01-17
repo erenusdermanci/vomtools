@@ -276,6 +276,7 @@ class VomTools:
         self.root.configure(bg="#0c0c0c")
         self.root.resizable(True, True)
         self.root.overrideredirect(True)  # Remove window title bar
+        self.root.attributes('-topmost', True)  # Always on top
         
         # Position window at bottom center of screen
         win_width, win_height = 900, 650
@@ -352,16 +353,8 @@ class VomTools:
                 "description": "Manage audio output"
             },
             {
-                "name": "Volume Mixer",
-                "key": "F2",
-                "icon": "◧",
-                "command": "__volume_mixer__",
-                "args": [],
-                "description": "Per-app volume control"
-            },
-            {
                 "name": "Quick Launch",
-                "key": "F3",
+                "key": "F2",
                 "icon": "▶",
                 "command": "__quick_launch__",
                 "args": [],
@@ -369,7 +362,7 @@ class VomTools:
             },
             {
                 "name": "Clipboard",
-                "key": "F4",
+                "key": "F3",
                 "icon": "◫",
                 "command": "__clipboard__",
                 "args": [],
@@ -377,7 +370,7 @@ class VomTools:
             },
             {
                 "name": "Network Info",
-                "key": "F5",
+                "key": "F4",
                 "icon": "◎",
                 "command": "__network_info__",
                 "args": [],
@@ -385,7 +378,7 @@ class VomTools:
             },
             {
                 "name": "System Monitor",
-                "key": "F6",
+                "key": "F5",
                 "icon": "◈",
                 "command": "__system_monitor__",
                 "args": [],
@@ -393,7 +386,7 @@ class VomTools:
             },
             {
                 "name": "Process Killer",
-                "key": "F7",
+                "key": "F6",
                 "icon": "✕",
                 "command": "__process_killer__",
                 "args": [],
@@ -401,7 +394,7 @@ class VomTools:
             },
             {
                 "name": "Suspend Task",
-                "key": "F8",
+                "key": "F7",
                 "icon": "⏸",
                 "command": "__suspend_task__",
                 "args": [],
@@ -409,7 +402,7 @@ class VomTools:
             },
             {
                 "name": "Clear Console",
-                "key": "F9",
+                "key": "F8",
                 "icon": "◇",
                 "command": None,
                 "args": [],
@@ -667,6 +660,7 @@ class VomTools:
     def show_from_tray(self):
         self.is_visible = True
         self.root.deiconify()
+        self.root.attributes('-topmost', True)  # Ensure always on top
         self.root.lift()
         self.root.focus_force()
     
@@ -754,10 +748,6 @@ class VomTools:
         
         if task["command"] == "__suspend_task__":
             self.show_suspend_task()
-            return
-        
-        if task["command"] == "__volume_mixer__":
-            self.show_volume_mixer()
             return
         
         if task["command"] == "__quick_launch__":
@@ -941,6 +931,7 @@ $results | ConvertTo-Json -Compress
     
     def center_popup(self, popup, width, height):
         """Center a popup window over the main application window"""
+        popup.withdraw()
         self.root.update_idletasks()
         main_x = self.root.winfo_x()
         main_y = self.root.winfo_y()
@@ -949,6 +940,12 @@ $results | ConvertTo-Json -Compress
         x = main_x + (main_w - width) // 2
         y = main_y + (main_h - height) // 2
         popup.geometry(f"{width}x{height}+{x}+{y}")
+        popup.update_idletasks()
+        popup.attributes('-topmost', True)
+        popup.deiconify()
+        popup.lift()
+        popup.grab_set()
+        popup.focus_force()
         popup.bind("<Escape>", lambda e: popup.destroy())
     
     def bind_mousewheel(self, canvas):
@@ -966,10 +963,6 @@ $results | ConvertTo-Json -Compress
         popup.configure(bg=self.colors['bg'])
         popup.overrideredirect(True)
         self.center_popup(popup, 550, 450)
-        popup.deiconify()
-        popup.lift()
-        popup.grab_set()
-        popup.focus_force()
         
         header = tk.Frame(popup, bg=self.colors['bg'])
         header.pack(fill=tk.X, padx=20, pady=(20, 15))
@@ -1286,12 +1279,7 @@ $results | ConvertTo-Json -Compress
         popup.configure(bg=self.colors['bg'])
         popup.overrideredirect(True)
         self.center_popup(popup, 450, 380)
-        popup.deiconify()
-        popup.lift()
-        popup.grab_set()
-        popup.focus_force()
         
-        # Header
         header = tk.Frame(popup, bg=self.colors['bg'])
         header.pack(fill=tk.X, padx=20, pady=(20, 15))
         
@@ -1490,328 +1478,6 @@ if ($result -eq 0) {{
                 self.log_raw(result.stderr.strip()[:100], "error")
             self.set_status("FAILED", True)
 
-    # ─── VOLUME MIXER ──────────────────────────────────────────────────────
-    def show_volume_mixer(self):
-        self.log("Scanning audio sessions...", "info")
-        self.set_status("SCANNING", is_warning=True)
-        
-        def scan():
-            try:
-                ps_script = '''
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-
-[Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface ISimpleAudioVolume {
-    int GetMasterVolume(out float level);
-    int SetMasterVolume(float level, ref Guid eventContext);
-    int GetMute(out bool mute);
-    int SetMute(bool mute, ref Guid eventContext);
-}
-
-[Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioSessionManager2 {
-    int QueryInterface();
-    int GetSessionEnumerator(out IAudioSessionEnumerator sessionEnum);
-}
-
-[Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioSessionEnumerator {
-    int GetCount(out int sessionCount);
-    int GetSession(int sessionIndex, out IAudioSessionControl session);
-}
-
-[Guid("F4B1A599-7266-4319-A8CA-E70ACB11E8CD"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioSessionControl {
-    int QueryInterface();
-    int QueryInterface2();
-    int QueryInterface3();
-    int QueryInterface4();
-    int QueryInterface5();
-    int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string displayName);
-}
-
-[Guid("BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioSessionControl2 : IAudioSessionControl {
-    int QueryInterface();
-    int QueryInterface2();
-    int QueryInterface3();
-    int QueryInterface4();
-    int QueryInterface5();
-    int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string displayName);
-    int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string displayName, ref Guid eventContext);
-    int GetIconPath([MarshalAs(UnmanagedType.LPWStr)] out string iconPath);
-    int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string iconPath, ref Guid eventContext);
-    int GetGroupingParam(out Guid groupingId);
-    int SetGroupingParam(ref Guid groupingId, ref Guid eventContext);
-    int RegisterAudioSessionNotification(IntPtr client);
-    int UnregisterAudioSessionNotification(IntPtr client);
-    int GetSessionIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string sessionId);
-    int GetSessionInstanceIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string sessionInstanceId);
-    int GetProcessId(out uint processId);
-    int IsSystemSoundsSession();
-}
-"@ -ErrorAction SilentlyContinue
-
-$sessions = @()
-Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object {
-    try {
-        $audioSession = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue
-        if ($audioSession) {
-            $sessions += @{
-                "PID" = $_.Id
-                "Name" = $_.ProcessName
-                "Title" = $_.MainWindowTitle
-                "Volume" = 100
-            }
-        }
-    } catch {}
-}
-
-# Get actual audio sessions via PowerShell method
-$audioApps = @()
-try {
-    $wshell = New-Object -ComObject WScript.Shell
-    $procs = Get-Process | Where-Object { $_.MainWindowTitle -ne "" }
-    foreach ($p in $procs) {
-        $audioApps += @{
-            "PID" = $p.Id
-            "Name" = $p.ProcessName
-            "Title" = if ($p.MainWindowTitle.Length -gt 40) { $p.MainWindowTitle.Substring(0,40) + "..." } else { $p.MainWindowTitle }
-            "Volume" = 100
-        }
-    }
-} catch {}
-
-$audioApps | ConvertTo-Json -Compress
-'''
-                result = subprocess.run(
-                    ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
-                    capture_output=True, text=True, timeout=30,
-                    creationflags=SUBPROCESS_FLAGS
-                )
-                self.root.after(0, lambda: self.display_volume_mixer(result.stdout, result.stderr))
-            except Exception as e:
-                self.root.after(0, lambda: self.log(f"Error: {e}", "error"))
-                self.root.after(0, lambda: self.set_status("ERROR", True))
-        
-        thread = threading.Thread(target=scan, daemon=True)
-        thread.start()
-    
-    def display_volume_mixer(self, json_output, stderr=""):
-        self.log("Audio sessions:", "accent")
-        
-        try:
-            sessions = json.loads(json_output) if json_output.strip() else []
-            if not isinstance(sessions, list):
-                sessions = [sessions]
-            
-            if not sessions:
-                self.log_raw("No audio sessions found", "warn")
-                self.set_status("NO SESSIONS", True)
-                return
-            
-            for sess in sessions[:10]:
-                name = sess.get('Name', 'Unknown')
-                self.log_raw(f"[{sess.get('PID', 0)}] {name}", "success")
-            
-            self.show_volume_mixer_popup(sessions[:10])
-            self.set_status("ADJUST VOLUME")
-            
-        except json.JSONDecodeError:
-            self.log_raw("Could not parse session list", "error")
-            self.set_status("PARSE ERROR", True)
-    
-    def show_volume_mixer_popup(self, sessions):
-        popup = tk.Toplevel(self.root)
-        popup.configure(bg=self.colors['bg'])
-        popup.overrideredirect(True)
-        self.center_popup(popup, 500, 450)
-        popup.deiconify()
-        popup.lift()
-        popup.grab_set()
-        popup.focus_force()
-        
-        header = tk.Frame(popup, bg=self.colors['bg'])
-        header.pack(fill=tk.X, padx=20, pady=(20, 15))
-        
-        tk.Label(header, text="◧", font=self.tiny_font, fg=self.colors['primary'], bg=self.colors['bg']).pack(side=tk.LEFT)
-        tk.Label(header, text=" VOLUME MIXER", font=self.tiny_font, fg=self.colors['text_dim'], bg=self.colors['bg']).pack(side=tk.LEFT)
-        
-        list_frame = tk.Frame(popup, bg=self.colors['bg'])
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
-        
-        canvas = tk.Canvas(list_frame, bg=self.colors['bg'], highlightthickness=0)
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview, style="Dark.Vertical.TScrollbar")
-        scrollable_frame = tk.Frame(canvas, bg=self.colors['bg'])
-        
-        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=450)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.bind_mousewheel(canvas)
-        
-        self.volume_sliders = {}
-        
-        for sess in sessions:
-            name = sess.get('Name', 'Unknown')
-            pid = sess.get('PID', 0)
-            title = sess.get('Title', '')[:30]
-            
-            row = tk.Frame(scrollable_frame, bg=self.colors['bg_elevated'])
-            row.pack(fill=tk.X, pady=2, ipady=5)
-            
-            name_frame = tk.Frame(row, bg=self.colors['bg_elevated'])
-            name_frame.pack(fill=tk.X, padx=12, pady=5)
-            
-            tk.Label(name_frame, text=f"▸ {name}", font=self.small_font, fg=self.colors['text'], bg=self.colors['bg_elevated'], anchor='w').pack(side=tk.LEFT)
-            
-            vol_var = tk.IntVar(value=100)
-            self.volume_sliders[pid] = vol_var
-            
-            slider_frame = tk.Frame(row, bg=self.colors['bg_elevated'])
-            slider_frame.pack(fill=tk.X, padx=12, pady=(0, 5))
-            
-            slider = tk.Scale(
-                slider_frame,
-                from_=0, to=100,
-                orient=tk.HORIZONTAL,
-                variable=vol_var,
-                bg=self.colors['bg_elevated'],
-                fg=self.colors['primary'],
-                troughcolor=self.colors['bg'],
-                highlightthickness=0,
-                sliderrelief='flat',
-                length=300,
-                showvalue=True,
-                font=self.tiny_font,
-                command=lambda v, p=pid, n=name: self.set_app_volume(p, n, int(v))
-            )
-            slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            
-            mute_btn = tk.Label(slider_frame, text="🔇", font=self.small_font, fg=self.colors['text_muted'], bg=self.colors['bg_elevated'], cursor="hand2")
-            mute_btn.pack(side=tk.RIGHT, padx=(10, 0))
-            mute_btn.bind("<Button-1>", lambda e, s=slider: s.set(0))
-        
-        cancel_frame = tk.Frame(popup, bg=self.colors['bg'])
-        cancel_frame.pack(fill=tk.X, padx=20, pady=15)
-        
-        cancel_btn = tk.Label(cancel_frame, text="Close", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg'], cursor="hand2")
-        cancel_btn.pack(side=tk.RIGHT)
-        cancel_btn.bind("<Button-1>", lambda e: popup.destroy())
-        cancel_btn.bind("<Enter>", lambda e: cancel_btn.configure(fg=self.colors['primary']))
-        cancel_btn.bind("<Leave>", lambda e: cancel_btn.configure(fg=self.colors['text_muted']))
-    
-    def set_app_volume(self, pid, name, volume):
-        def do_set():
-            try:
-                ps_script = f'''
-$volume = {volume / 100.0}
-try {{
-    Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-
-[Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface ISimpleAudioVolume {{
-    int GetMasterVolume(out float pfLevel);
-    int SetMasterVolume(float fLevel, ref Guid EventContext);
-    int GetMute(out bool pbMute);
-    int SetMute(bool bMute, ref Guid EventContext);
-}}
-
-[Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioSessionManager2 {{
-    int NotImpl1();
-    int NotImpl2();
-    int GetSessionEnumerator(out IAudioSessionEnumerator SessionEnum);
-}}
-
-[Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioSessionEnumerator {{
-    int GetCount(out int SessionCount);
-    int GetSession(int SessionCount, out IAudioSessionControl2 Session);
-}}
-
-[Guid("bfb7ff88-7239-4fc9-8fa2-07c950be9c6d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioSessionControl2 {{
-    int NotImpl1();
-    int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
-    int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string Value, [MarshalAs(UnmanagedType.LPStruct)] Guid EventContext);
-    int GetIconPath([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
-    int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string Value, [MarshalAs(UnmanagedType.LPStruct)] Guid EventContext);
-    int GetGroupingParam(out Guid pRetVal);
-    int SetGroupingParam([MarshalAs(UnmanagedType.LPStruct)] Guid Override, [MarshalAs(UnmanagedType.LPStruct)] Guid EventContext);
-    int NotImpl2();
-    int NotImpl3();
-    int GetSessionIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
-    int GetSessionInstanceIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
-    int GetProcessId(out int pRetVal);
-    int IsSystemSoundsSession();
-    int SetDuckingPreference(bool optOut);
-}}
-
-[Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-class MMDeviceEnumerator {{}}
-
-[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDeviceEnumerator {{
-    int NotImpl1();
-    int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice);
-}}
-
-[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDevice {{
-    int Activate(ref Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
-}}
-
-public class AudioManager {{
-    public static void SetVolume(int pid, float volume) {{
-        var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
-        IMMDevice device;
-        enumerator.GetDefaultAudioEndpoint(0, 1, out device);
-        Guid IID_IAudioSessionManager2 = typeof(IAudioSessionManager2).GUID;
-        object o;
-        device.Activate(ref IID_IAudioSessionManager2, 0, IntPtr.Zero, out o);
-        var mgr = (IAudioSessionManager2)o;
-        IAudioSessionEnumerator sessionEnumerator;
-        mgr.GetSessionEnumerator(out sessionEnumerator);
-        int count;
-        sessionEnumerator.GetCount(out count);
-        for (int i = 0; i < count; i++) {{
-            IAudioSessionControl2 ctl;
-            sessionEnumerator.GetSession(i, out ctl);
-            int sessionPid;
-            ctl.GetProcessId(out sessionPid);
-            if (sessionPid == pid) {{
-                var vol = (ISimpleAudioVolume)ctl;
-                Guid guid = Guid.Empty;
-                vol.SetMasterVolume(volume, ref guid);
-                break;
-            }}
-        }}
-    }}
-}}
-"@ -ErrorAction SilentlyContinue
-    [AudioManager]::SetVolume({pid}, $volume)
-    Write-Output "SUCCESS"
-}} catch {{
-    Write-Output "FALLBACK"
-}}
-'''
-                subprocess.run(
-                    ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
-                    capture_output=True, text=True, timeout=10,
-                    creationflags=SUBPROCESS_FLAGS
-                )
-            except:
-                pass
-        
-        threading.Thread(target=do_set, daemon=True).start()
-
     # ─── QUICK LAUNCHER ────────────────────────────────────────────────────
     def show_quick_launch(self):
         self.log("Quick Launcher", "accent")
@@ -1821,10 +1487,6 @@ public class AudioManager {{
         popup.configure(bg=self.colors['bg'])
         popup.overrideredirect(True)
         self.center_popup(popup, 400, 420)
-        popup.deiconify()
-        popup.lift()
-        popup.grab_set()
-        popup.focus_force()
         
         header = tk.Frame(popup, bg=self.colors['bg'])
         header.pack(fill=tk.X, padx=20, pady=(20, 15))
@@ -1903,10 +1565,6 @@ public class AudioManager {{
         popup.configure(bg=self.colors['bg'])
         popup.overrideredirect(True)
         self.center_popup(popup, 500, 450)
-        popup.deiconify()
-        popup.lift()
-        popup.grab_set()
-        popup.focus_force()
         
         header = tk.Frame(popup, bg=self.colors['bg'])
         header.pack(fill=tk.X, padx=20, pady=(20, 15))
@@ -2108,10 +1766,6 @@ $results | ConvertTo-Json -Depth 3 -Compress
         popup.configure(bg=self.colors['bg'])
         popup.overrideredirect(True)
         self.center_popup(popup, 600, 500)
-        popup.deiconify()
-        popup.lift()
-        popup.grab_set()
-        popup.focus_force()
         
         self.monitor_popup = popup
         self.monitor_running = True
@@ -2368,10 +2022,6 @@ $procs | ForEach-Object {
         popup.configure(bg=self.colors['bg'])
         popup.overrideredirect(True)
         self.center_popup(popup, 550, 480)
-        popup.deiconify()
-        popup.lift()
-        popup.grab_set()
-        popup.focus_force()
         
         header = tk.Frame(popup, bg=self.colors['bg'])
         header.pack(fill=tk.X, padx=20, pady=(20, 10))
