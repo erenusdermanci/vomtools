@@ -522,7 +522,7 @@ class VomTools:
             self.root,
             text="◢ OUTPUT",
             font=self.tiny_font,
-            fg=self.colors['secondary'],
+            fg=self.colors['primary'],
             bg=canvas_bg
         )
         self.output_header.place(x=280, y=130)
