@@ -413,6 +413,21 @@ class VomTools:
         self.tray_icon = None
         self.is_visible = True
         
+        # Settings / config
+        self.config_path = os.path.join(os.path.dirname(__file__), 'vomtools_config.json')
+        self.color_presets = {
+            'Green': {'primary': '#00ff9f', 'primary_dim': '#00aa6b', 'primary_dark': '#004d31', 'success': '#00ff9f', 'glow': '#00ff9f'},
+            'Cyan': {'primary': '#00d4ff', 'primary_dim': '#0099bb', 'primary_dark': '#004d66', 'success': '#00d4ff', 'glow': '#00d4ff'},
+            'Purple': {'primary': '#b388ff', 'primary_dim': '#7c4dff', 'primary_dark': '#4a2d80', 'success': '#b388ff', 'glow': '#b388ff'},
+            'Red': {'primary': '#ff5555', 'primary_dim': '#cc3333', 'primary_dark': '#661a1a', 'success': '#ff5555', 'glow': '#ff5555'},
+            'Orange': {'primary': '#ffaa00', 'primary_dim': '#cc8800', 'primary_dark': '#664400', 'success': '#ffaa00', 'glow': '#ffaa00'},
+            'Pink': {'primary': '#ff66b2', 'primary_dim': '#cc4d8f', 'primary_dark': '#662647', 'success': '#ff66b2', 'glow': '#ff66b2'},
+            'Blue': {'primary': '#4d88ff', 'primary_dim': '#3366cc', 'primary_dark': '#1a3366', 'success': '#4d88ff', 'glow': '#4d88ff'},
+        }
+        self.current_hotkey = 'ctrl+decimal'
+        self.current_color_name = 'Green'
+        self.load_config()
+        
         self.setup_scrollbar_style()
         self.setup_ui()
         self.setup_tray()
@@ -584,12 +599,26 @@ class VomTools:
         # ESC hint
         self.esc_hint = tk.Label(
             self.root,
-            text="ESC hide  |  Ctrl+NumDel toggle",
+            text=f"ESC hide  |  {self.current_hotkey} toggle",
             font=self.tiny_font,
             fg=self.colors['text_muted'],
             bg=canvas_bg
         )
-        self.esc_hint.place(relx=0.98, rely=0.95, anchor='e')
+        self.esc_hint.place(relx=0.88, rely=0.95, anchor='e')
+        
+        # Settings button
+        self.settings_btn = tk.Label(
+            self.root,
+            text="⚙",
+            font=self.small_font,
+            fg=self.colors['text_muted'],
+            bg=canvas_bg,
+            cursor="hand2"
+        )
+        self.settings_btn.place(relx=0.98, rely=0.95, anchor='e')
+        self.settings_btn.bind("<Enter>", lambda e: self.settings_btn.configure(fg=self.colors['primary']))
+        self.settings_btn.bind("<Leave>", lambda e: self.settings_btn.configure(fg=self.colors['text_muted']))
+        self.settings_btn.bind("<Button-1>", lambda e: self.show_settings())
     
     def create_task_button(self, task, index):
         """Create a minimal transparent task button"""
@@ -642,7 +671,7 @@ class VomTools:
         self.tray_icon = pystray.Icon("VomTools", image, "VomTools", menu)
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
         
-        keyboard.add_hotkey('ctrl+decimal', self.on_global_hotkey)
+        keyboard.add_hotkey(self.current_hotkey, self.on_global_hotkey)
     
     def on_global_hotkey(self):
         self.root.after(0, self.toggle_visibility)
@@ -2139,6 +2168,161 @@ $procs | ForEach-Object {
                 self.root.after(0, lambda: self.set_status("ERROR", True))
         
         threading.Thread(target=do_kill, daemon=True).start()
+
+    # ─── SETTINGS ──────────────────────────────────────────────────────────
+    def load_config(self):
+        """Load settings from config file"""
+        try:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, 'r') as f:
+                    config = json.load(f)
+                    self.current_hotkey = config.get('hotkey', 'ctrl+decimal')
+                    self.current_color_name = config.get('color', 'Green')
+                    if self.current_color_name in self.color_presets:
+                        for key, value in self.color_presets[self.current_color_name].items():
+                            self.colors[key] = value
+        except Exception:
+            pass
+    
+    def save_config(self):
+        """Save settings to config file"""
+        try:
+            config = {
+                'hotkey': self.current_hotkey,
+                'color': self.current_color_name
+            }
+            with open(self.config_path, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception:
+            pass
+    
+    def show_settings(self):
+        """Show settings popup"""
+        self.log("Settings", "accent")
+        self.set_status("CONFIGURE")
+        
+        popup = tk.Toplevel(self.root)
+        popup.configure(bg=self.colors['bg'])
+        popup.overrideredirect(True)
+        self.center_popup(popup, 350, 320)
+        
+        header = tk.Frame(popup, bg=self.colors['bg'])
+        header.pack(fill=tk.X, padx=20, pady=(20, 15))
+        
+        tk.Label(header, text="⚙", font=self.tiny_font, fg=self.colors['primary'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        tk.Label(header, text=" SETTINGS", font=self.tiny_font, fg=self.colors['text_dim'], bg=self.colors['bg']).pack(side=tk.LEFT)
+        
+        content = tk.Frame(popup, bg=self.colors['bg'])
+        content.pack(fill=tk.BOTH, expand=True, padx=20)
+        
+        # Hotkey section
+        tk.Label(content, text="Toggle Hotkey", font=self.tiny_font, fg=self.colors['text_dim'], bg=self.colors['bg'], anchor='w').pack(fill=tk.X, pady=(0, 5))
+        
+        hotkey_options = [
+            ('Ctrl+NumDel', 'ctrl+decimal'),
+            ('Ctrl+`', 'ctrl+`'),
+            ('Ctrl+Shift+V', 'ctrl+shift+v'),
+            ('Alt+Space', 'alt+space'),
+            ('Ctrl+Shift+T', 'ctrl+shift+t'),
+        ]
+        
+        self.hotkey_var = tk.StringVar(value=self.current_hotkey)
+        
+        hotkey_frame = tk.Frame(content, bg=self.colors['bg'])
+        hotkey_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        for label, value in hotkey_options:
+            rb = tk.Radiobutton(
+                hotkey_frame,
+                text=label,
+                variable=self.hotkey_var,
+                value=value,
+                font=self.tiny_font,
+                fg=self.colors['text'],
+                bg=self.colors['bg'],
+                selectcolor=self.colors['bg_elevated'],
+                activebackground=self.colors['bg'],
+                activeforeground=self.colors['primary'],
+                highlightthickness=0,
+                bd=0
+            )
+            rb.pack(anchor='w', pady=1)
+        
+        # Color section
+        tk.Label(content, text="Accent Color", font=self.tiny_font, fg=self.colors['text_dim'], bg=self.colors['bg'], anchor='w').pack(fill=tk.X, pady=(10, 5))
+        
+        self.color_var = tk.StringVar(value=self.current_color_name)
+        
+        color_frame = tk.Frame(content, bg=self.colors['bg'])
+        color_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        for color_name, preset in self.color_presets.items():
+            cf = tk.Frame(color_frame, bg=self.colors['bg'])
+            cf.pack(side=tk.LEFT, padx=3)
+            
+            color_btn = tk.Label(
+                cf,
+                text="●",
+                font=self.small_font,
+                fg=preset['primary'],
+                bg=self.colors['bg'],
+                cursor="hand2"
+            )
+            color_btn.pack()
+            
+            def on_color_click(e, cn=color_name):
+                self.color_var.set(cn)
+                for child in color_frame.winfo_children():
+                    for lbl in child.winfo_children():
+                        lbl.configure(font=self.small_font)
+                e.widget.configure(font=self.main_font)
+            
+            color_btn.bind("<Button-1>", on_color_click)
+            
+            if color_name == self.current_color_name:
+                color_btn.configure(font=self.main_font)
+        
+        # Buttons
+        btn_frame = tk.Frame(popup, bg=self.colors['bg'])
+        btn_frame.pack(fill=tk.X, padx=20, pady=15)
+        
+        def apply_settings():
+            new_hotkey = self.hotkey_var.get()
+            new_color = self.color_var.get()
+            
+            # Update hotkey
+            if new_hotkey != self.current_hotkey:
+                try:
+                    keyboard.remove_hotkey(self.current_hotkey)
+                except:
+                    pass
+                self.current_hotkey = new_hotkey
+                keyboard.add_hotkey(self.current_hotkey, self.on_global_hotkey)
+                self.esc_hint.config(text=f"ESC hide  |  {self.current_hotkey} toggle")
+            
+            # Update color
+            if new_color != self.current_color_name:
+                self.current_color_name = new_color
+                for key, value in self.color_presets[new_color].items():
+                    self.colors[key] = value
+                self.log(f"Theme changed to {new_color} - restart for full effect", "info")
+            
+            self.save_config()
+            popup.destroy()
+            self.log("Settings saved", "accent")
+            self.set_status("READY")
+        
+        save_btn = tk.Label(btn_frame, text="Save", font=self.tiny_font, fg=self.colors['primary'], bg=self.colors['bg'], cursor="hand2")
+        save_btn.pack(side=tk.LEFT)
+        save_btn.bind("<Button-1>", lambda e: apply_settings())
+        save_btn.bind("<Enter>", lambda e: save_btn.configure(fg=self.colors['success']))
+        save_btn.bind("<Leave>", lambda e: save_btn.configure(fg=self.colors['primary']))
+        
+        cancel_btn = tk.Label(btn_frame, text="Cancel", font=self.tiny_font, fg=self.colors['text_muted'], bg=self.colors['bg'], cursor="hand2")
+        cancel_btn.pack(side=tk.RIGHT)
+        cancel_btn.bind("<Button-1>", lambda e: popup.destroy())
+        cancel_btn.bind("<Enter>", lambda e: cancel_btn.configure(fg=self.colors['error']))
+        cancel_btn.bind("<Leave>", lambda e: cancel_btn.configure(fg=self.colors['text_muted']))
 
 
 def main():
