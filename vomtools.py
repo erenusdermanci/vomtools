@@ -273,9 +273,17 @@ class VomTools:
     def __init__(self, root):
         self.root = root
         self.root.title("VomTools")
-        self.root.geometry("900x650")
         self.root.configure(bg="#0c0c0c")
         self.root.resizable(True, True)
+        self.root.overrideredirect(True)  # Remove window title bar
+        
+        # Position window at bottom center of screen
+        win_width, win_height = 900, 650
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - win_width) // 2
+        y = screen_height - win_height
+        self.root.geometry(f"{win_width}x{win_height}+{x}+{y}")
         
         # Set icon
         icon_path = os.path.join(os.path.dirname(__file__), 'vomtools.ico')
