@@ -6,28 +6,272 @@ import threading
 from datetime import datetime
 import random
 import sys
+import math
+import json
 
 # Hide PowerShell windows on Windows
 SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
-ASCII_BANNER = r"""
-██╗   ██╗ ██████╗ ███╗   ███╗████████╗ ██████╗  ██████╗ ██╗     ███████╗
-██║   ██║██╔═══██╗████╗ ████║╚══██╔══╝██╔═══██╗██╔═══██╗██║     ██╔════╝
-██║   ██║██║   ██║██╔████╔██║   ██║   ██║   ██║██║   ██║██║     ███████╗
-╚██╗ ██╔╝██║   ██║██║╚██╔╝██║   ██║   ██║   ██║██║   ██║██║     ╚════██║
- ╚████╔╝ ╚██████╔╝██║ ╚═╝ ██║   ██║   ╚██████╔╝╚██████╔╝███████╗███████║
-  ╚═══╝   ╚═════╝ ╚═╝     ╚═╝   ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝╚══════╝
-"""
 
-DIVIDER = "═" * 72
-THIN_DIVIDER = "─" * 72
+class AnimatedOrb:
+    """Animated green/black orb background inspired by Ampcode"""
+    
+    def __init__(self, canvas, colors):
+        self.canvas = canvas
+        self.colors = colors
+        self.width = 900
+        self.height = 650
+        
+        # Orb state
+        self.orb_x = self.width // 2
+        self.orb_y = self.height // 2
+        self.orb_target_x = self.orb_x
+        self.orb_target_y = self.orb_y
+        self.orb_radius = 120  # Larger orb
+        self.orb_pulse = 0
+        
+        # Mouse state
+        self.mouse_x = self.width // 2
+        self.mouse_y = self.height // 2
+        
+        # Particles - more for fuller effect
+        self.particles = []
+        self.num_particles = 80
+        self.init_particles()
+        
+        # Click burst state
+        self.bursts = []
+        
+        # Energy rings
+        self.rings = []
+        
+        # Bind mouse events
+        self.canvas.bind("<Motion>", self.on_mouse_move)
+        self.canvas.bind("<Button-1>", self.on_click)
+        self.canvas.bind("<Configure>", self.on_resize)
+        
+        # Start animation
+        self.animate()
+    
+    def init_particles(self):
+        """Initialize floating particles"""
+        self.particles = []
+        for _ in range(self.num_particles):
+            self.particles.append({
+                'x': random.randint(0, self.width),
+                'y': random.randint(0, self.height),
+                'vx': random.uniform(-0.5, 0.5),
+                'vy': random.uniform(-0.5, 0.5),
+                'size': random.uniform(1, 3),
+                'brightness': random.uniform(0.3, 1.0),
+                'phase': random.uniform(0, math.pi * 2),
+            })
+    
+    def on_resize(self, event):
+        self.width = event.width
+        self.height = event.height
+    
+    def on_mouse_move(self, event):
+        self.mouse_x = event.x
+        self.mouse_y = event.y
+        self.orb_target_x = event.x
+        self.orb_target_y = event.y
+    
+    def on_click(self, event):
+        """Create burst effect on click"""
+        self.bursts.append({
+            'x': event.x,
+            'y': event.y,
+            'radius': 0,
+            'max_radius': 200,
+            'alpha': 1.0,
+            'rings': [],
+        })
+        # Add shockwave rings
+        for i in range(4):
+            self.rings.append({
+                'x': event.x,
+                'y': event.y,
+                'radius': i * 10,
+                'alpha': 1.0,
+                'speed': 8 + i * 2,
+            })
+        # Scatter nearby particles
+        for p in self.particles:
+            dx = p['x'] - event.x
+            dy = p['y'] - event.y
+            dist = math.sqrt(dx*dx + dy*dy)
+            if dist < 150 and dist > 0:
+                force = (150 - dist) / 15
+                p['vx'] += (dx / dist) * force
+                p['vy'] += (dy / dist) * force
+    
+    def lerp(self, a, b, t):
+        return a + (b - a) * t
+    
+    def animate(self):
+        """Main animation loop"""
+        self.canvas.delete("orb_bg")
+        
+        # Update orb position (smooth follow)
+        self.orb_x = self.lerp(self.orb_x, self.orb_target_x, 0.03)
+        self.orb_y = self.lerp(self.orb_y, self.orb_target_y, 0.03)
+        self.orb_pulse += 0.05
+        
+        # Draw outer glow layers - larger spread
+        pulse_offset = math.sin(self.orb_pulse) * 15
+        for i in range(8, 0, -1):
+            r = self.orb_radius + i * 35 + pulse_offset
+            intensity = int(25 - i * 3)
+            color = f"#{0:02x}{max(0,intensity):02x}{0:02x}"
+            self.canvas.create_oval(
+                self.orb_x - r, self.orb_y - r,
+                self.orb_x + r, self.orb_y + r,
+                fill=color, outline="",
+                tags="orb_bg"
+            )
+        
+        # Draw orb core
+        core_pulse = self.orb_radius + math.sin(self.orb_pulse * 1.5) * 5
+        for i in range(5, 0, -1):
+            r = core_pulse * (i / 5)
+            g = int(80 + (5 - i) * 35)
+            color = f"#{0:02x}{min(255, g):02x}{int(g*0.4):02x}"
+            self.canvas.create_oval(
+                self.orb_x - r, self.orb_y - r,
+                self.orb_x + r, self.orb_y + r,
+                fill=color, outline="",
+                tags="orb_bg"
+            )
+        
+        # Update and draw particles
+        for p in self.particles:
+            # Attract to orb slightly
+            dx = self.orb_x - p['x']
+            dy = self.orb_y - p['y']
+            dist = math.sqrt(dx*dx + dy*dy)
+            
+            if dist > 0:
+                # Orbit around orb
+                attract = 0.02
+                p['vx'] += (dx / dist) * attract
+                p['vy'] += (dy / dist) * attract
+                
+                # Tangential velocity for orbit effect
+                p['vx'] += (-dy / dist) * 0.01
+                p['vy'] += (dx / dist) * 0.01
+            
+            # Mouse repulsion
+            mx = p['x'] - self.mouse_x
+            my = p['y'] - self.mouse_y
+            mouse_dist = math.sqrt(mx*mx + my*my)
+            if mouse_dist < 100 and mouse_dist > 0:
+                repel = (100 - mouse_dist) / 500
+                p['vx'] += (mx / mouse_dist) * repel
+                p['vy'] += (my / mouse_dist) * repel
+            
+            # Apply velocity with damping
+            p['x'] += p['vx']
+            p['y'] += p['vy']
+            p['vx'] *= 0.98
+            p['vy'] *= 0.98
+            
+            # Wrap around edges
+            if p['x'] < 0: p['x'] = self.width
+            if p['x'] > self.width: p['x'] = 0
+            if p['y'] < 0: p['y'] = self.height
+            if p['y'] > self.height: p['y'] = 0
+            
+            # Pulsing brightness
+            p['phase'] += 0.02
+            brightness = p['brightness'] * (0.7 + 0.3 * math.sin(p['phase']))
+            
+            # Distance-based brightness
+            if dist < 200:
+                brightness *= (0.5 + 0.5 * (dist / 200))
+            
+            g = int(brightness * 255)
+            color = f"#{0:02x}{g:02x}{int(g*0.5):02x}"
+            
+            size = p['size']
+            self.canvas.create_oval(
+                p['x'] - size, p['y'] - size,
+                p['x'] + size, p['y'] + size,
+                fill=color, outline="",
+                tags="orb_bg"
+            )
+        
+        # Draw energy connections between close particles
+        for i, p1 in enumerate(self.particles[:20]):
+            for p2 in self.particles[i+1:20]:
+                dx = p1['x'] - p2['x']
+                dy = p1['y'] - p2['y']
+                dist = math.sqrt(dx*dx + dy*dy)
+                if dist < 80:
+                    alpha = int((1 - dist/80) * 40)
+                    color = f"#{0:02x}{alpha:02x}{0:02x}"
+                    self.canvas.create_line(
+                        p1['x'], p1['y'], p2['x'], p2['y'],
+                        fill=color, width=1,
+                        tags="orb_bg"
+                    )
+        
+        # Update and draw burst effects
+        active_bursts = []
+        for burst in self.bursts:
+            burst['radius'] += 12
+            burst['alpha'] -= 0.03
+            
+            if burst['alpha'] > 0:
+                # Draw expanding burst
+                for i in range(3):
+                    r = burst['radius'] - i * 15
+                    if r > 0:
+                        intensity = int(burst['alpha'] * 100 * (1 - i * 0.3))
+                        color = f"#{0:02x}{max(0,intensity):02x}{0:02x}"
+                        self.canvas.create_oval(
+                            burst['x'] - r, burst['y'] - r,
+                            burst['x'] + r, burst['y'] + r,
+                            outline=color, width=3-i,
+                            tags="orb_bg"
+                        )
+                active_bursts.append(burst)
+        self.bursts = active_bursts
+        
+        # Update and draw shockwave rings
+        active_rings = []
+        for ring in self.rings:
+            ring['radius'] += ring['speed']
+            ring['alpha'] -= 0.025
+            
+            if ring['alpha'] > 0:
+                intensity = int(ring['alpha'] * 180)
+                color = f"#{0:02x}{intensity:02x}{int(intensity*0.6):02x}"
+                self.canvas.create_oval(
+                    ring['x'] - ring['radius'], ring['y'] - ring['radius'],
+                    ring['x'] + ring['radius'], ring['y'] + ring['radius'],
+                    outline=color, width=2,
+                    tags="orb_bg"
+                )
+                active_rings.append(ring)
+        self.rings = active_rings
+        
+        # Continue animation
+        self.canvas.after(16, self.animate)
+
+# Minimalist ASCII banner - clean pixel-art style
+ASCII_BANNER = r"""
+ ╦  ╦╔═╗╔╦╗╔╦╗╔═╗╔═╗╦  ╔═╗
+ ╚╗╔╝║ ║║║║ ║ ║ ║║ ║║  ╚═╗
+  ╚╝ ╚═╝╩ ╩ ╩ ╚═╝╚═╝╩═╝╚═╝
+"""
 
 class VomTools:
     def __init__(self, root):
         self.root = root
-        self.root.title("VomTools v1.0")
-        self.root.geometry("800x600")
-        self.root.configure(bg="#0a0a0a")
+        self.root.title("VomTools")
+        self.root.geometry("900x650")
+        self.root.configure(bg="#0c0c0c")
         self.root.resizable(True, True)
         
         # Set icon
@@ -35,77 +279,92 @@ class VomTools:
         if os.path.exists(icon_path):
             self.root.iconbitmap(icon_path)
         
-        # Classic hacker fonts - Courier is the tried-and-true terminal font
+        # Modern monospace fonts
         self.hacker_fonts = [
-            "Courier New",        # THE classic hacker/terminal font
-            "Courier",            # Original Courier
-            "Lucida Console",     # Classic Windows console font
-            "Fixedsys",           # Windows fixed-width pixel font  
-            "Terminal",           # Classic DOS terminal font
-            "Consolas",           # Fallback
+            "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas",
+            "SF Mono", "Menlo", "Monaco", "Courier New"
         ]
         self.main_font = self.get_available_font(11)
-        self.small_font = self.get_available_font(9)
-        self.banner_font = self.get_available_font(7)
+        self.small_font = self.get_available_font(10)
+        self.banner_font = self.get_available_font(12)
+        self.tiny_font = self.get_available_font(8)
+        
+        # Sleek cyberpunk color palette
+        self.colors = {
+            'bg': '#0c0c0c',
+            'bg_secondary': '#111111',
+            'bg_elevated': '#0f0f0f',   # Darker for less obstruction
+            'bg_hover': '#141414',
+            'bg_trans': '#0c0c0c',      # "Transparent" (matches canvas)
+            'primary': '#00ff9f',       # Neon mint
+            'primary_dim': '#00aa6b',
+            'primary_dark': '#004d31',
+            'secondary': '#00d4ff',     # Cyan accent
+            'text': '#e0e0e0',
+            'text_dim': '#666666',
+            'text_muted': '#444444',
+            'error': '#ff3366',
+            'warning': '#ffaa00',
+            'success': '#00ff9f',
+            'border': '#1f1f1f',
+            'glow': '#00ff9f',
+        }
         
         # Animation state
-        self.ripples = []
-        self.matrix_chars = []
+        self.cursor_visible = True
+        self.animated_orb = None
         
-        # Colors
-        self.bg_color = "#0a0a0a"
-        self.fg_color = "#00ff00"
-        self.accent_color = "#00aa00"
-        self.dim_color = "#006600"
-        self.error_color = "#ff3333"
-        self.warn_color = "#ffaa00"
-        
-        # Define tasks/presets
+        # Define tasks
         self.tasks = [
             {
-                "name": "Launch GameDev Workspace",
+                "name": "Audio Devices",
                 "key": "F1",
+                "icon": "♪",
+                "command": "__audio_devices__",
+                "args": [],
+                "description": "Manage audio output"
+            },
+            {
+                "name": "GameDev Workspace",
+                "key": "F2",
+                "icon": "▶",
                 "command": "powershell.exe",
                 "args": ["-ExecutionPolicy", "Bypass", "-File", 
                          os.path.expanduser("~/Desktop/LaunchGameDevWorkspace.ps1")],
-                "description": "Initialize game development environment"
+                "description": "Launch dev environment"
             },
             {
                 "name": "System Info",
-                "key": "F2", 
+                "key": "F3",
+                "icon": "◈",
                 "command": "systeminfo",
                 "args": [],
-                "description": "Display system information"
+                "description": "Display system specs"
             },
             {
                 "name": "Network Status",
-                "key": "F3",
+                "key": "F4",
+                "icon": "◎",
                 "command": "ipconfig",
                 "args": ["/all"],
-                "description": "Show network configuration"
+                "description": "Network configuration"
             },
             {
                 "name": "Clear Console",
-                "key": "F4",
+                "key": "F5",
+                "icon": "◇",
                 "command": None,
                 "args": [],
-                "description": "Clear the output console"
-            },
-            {
-                "name": "Audio Devices",
-                "key": "F5",
-                "command": "__audio_devices__",
-                "args": [],
-                "description": "List/set default audio output device"
-            },
+                "description": "Reset terminal output"
+            }
         ]
         
         self.setup_ui()
         self.bind_keys()
+        self.start_animations()
         self.log_startup()
     
     def get_available_font(self, size):
-        """Find first available hacker-style font"""
         import tkinter.font as tkfont
         available = set(f.lower() for f in tkfont.families())
         for font in self.hacker_fonts:
@@ -114,275 +373,234 @@ class VomTools:
         return ("Consolas", size)
     
     def setup_ui(self):
-        # Animation canvas (background layer)
-        self.anim_canvas = tk.Canvas(
+        # Use a single canvas for everything - both animation and UI
+        self.bg_canvas = tk.Canvas(
             self.root, 
-            bg=self.bg_color, 
+            bg=self.colors['bg'], 
             highlightthickness=0
         )
-        self.anim_canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        self.bg_canvas.pack(fill=tk.BOTH, expand=True)
         
-        # Bind click for ripple animation
-        self.root.bind("<Button-1>", self.on_click_animation)
+        # Initialize animated orb background
+        self.animated_orb = AnimatedOrb(self.bg_canvas, self.colors)
         
-        # Main container
-        main_frame = tk.Frame(self.root, bg=self.bg_color)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # All UI placed on canvas with canvas bg for transparency effect
+        canvas_bg = self.colors['bg']
         
-        # ASCII Banner
-        banner_label = tk.Label(
-            main_frame, 
+        # Header - banner  
+        self.banner_label = tk.Label(
+            self.root,
             text=ASCII_BANNER,
             font=self.banner_font,
-            fg=self.fg_color,
-            bg=self.bg_color,
-            justify=tk.LEFT
+            fg=self.colors['primary'],
+            bg=canvas_bg,
+            justify=tk.CENTER
         )
-        banner_label.pack(pady=(0, 5))
+        self.banner_label.place(relx=0.5, y=15, anchor='n')
         
-        # Subtitle
-        subtitle = tk.Label(
-            main_frame,
-            text="[ SYSTEM AUTOMATION TOOLKIT ]",
-            font=self.main_font,
-            fg=self.dim_color,
-            bg=self.bg_color
+        # Tagline
+        self.tagline_label = tk.Label(
+            self.root,
+            text="─── SYSTEM AUTOMATION TOOLKIT ───",
+            font=self.tiny_font,
+            fg=self.colors['text_dim'],
+            bg=canvas_bg
         )
-        subtitle.pack()
+        self.tagline_label.place(relx=0.5, y=95, anchor='n')
         
-        # Divider
-        divider_label = tk.Label(
-            main_frame,
-            text=DIVIDER,
-            font=self.main_font,
-            fg=self.dim_color,
-            bg=self.bg_color
+        # Commands section header
+        self.commands_header = tk.Label(
+            self.root,
+            text="◢ COMMANDS",
+            font=self.tiny_font,
+            fg=self.colors['primary_dim'],
+            bg=canvas_bg
         )
-        divider_label.pack(pady=5)
+        self.commands_header.place(x=20, y=130)
         
-        # Tasks frame
-        tasks_frame = tk.Frame(main_frame, bg=self.bg_color)
-        tasks_frame.pack(fill=tk.X, pady=5)
+        # Task buttons - minimal transparent styling
+        self.tasks_container = tk.Frame(self.root, bg=self.colors['bg'])
+        self.tasks_container.place(x=20, y=155, width=240, relheight=0.55)
         
-        tasks_header = tk.Label(
-            tasks_frame,
-            text="┌─[ AVAILABLE TASKS ]" + "─" * 50 + "┐",
-            font=self.main_font,
-            fg=self.accent_color,
-            bg=self.bg_color,
-            anchor="w"
-        )
-        tasks_header.pack(fill=tk.X)
-        
-        # Task buttons
         for i, task in enumerate(self.tasks):
-            task_row = tk.Frame(tasks_frame, bg=self.bg_color)
-            task_row.pack(fill=tk.X, pady=2)
-            
-            btn = tk.Button(
-                task_row,
-                text=f"│ [{task['key']}] {task['name']}",
-                font=self.main_font,
-                fg=self.fg_color,
-                bg="#1a1a1a",
-                activeforeground="#ffffff",
-                activebackground="#003300",
-                border=0,
-                cursor="hand2",
-                anchor="w",
-                width=35,
-                command=lambda t=task: self.execute_task(t)
-            )
-            btn.pack(side=tk.LEFT)
-            
-            desc_label = tk.Label(
-                task_row,
-                text=f"  → {task['description']}",
-                font=self.small_font,
-                fg=self.dim_color,
-                bg=self.bg_color,
-                anchor="w"
-            )
-            desc_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self.create_task_button(task, i)
         
-        tasks_footer = tk.Label(
-            tasks_frame,
-            text="└" + "─" * 70 + "┘",
-            font=self.main_font,
-            fg=self.accent_color,
-            bg=self.bg_color,
-            anchor="w"
+        # Output section header
+        self.output_header = tk.Label(
+            self.root,
+            text="◢ OUTPUT",
+            font=self.tiny_font,
+            fg=self.colors['secondary'],
+            bg=canvas_bg
         )
-        tasks_footer.pack(fill=tk.X)
+        self.output_header.place(x=280, y=130)
         
-        # Console output
-        console_header = tk.Label(
-            main_frame,
-            text="┌─[ CONSOLE OUTPUT ]" + "─" * 51 + "┐",
-            font=self.main_font,
-            fg=self.accent_color,
-            bg=self.bg_color,
-            anchor="w"
+        self.cursor_label = tk.Label(
+            self.root,
+            text=" █",
+            font=self.tiny_font,
+            fg=self.colors['primary'],
+            bg=canvas_bg
         )
-        console_header.pack(fill=tk.X, pady=(10, 0))
+        self.cursor_label.place(x=355, y=130)
+        
+        # Console - darker background with border glow effect
+        console_border = tk.Frame(self.root, bg=self.colors['primary_dark'])
+        console_border.place(x=278, y=153, relwidth=0.655, relheight=0.66)
         
         self.console = scrolledtext.ScrolledText(
-            main_frame,
+            console_border,
             font=self.small_font,
-            fg=self.fg_color,
-            bg="#0d0d0d",
-            insertbackground=self.fg_color,
-            selectbackground=self.accent_color,
-            height=15,
+            fg=self.colors['text'],
+            bg='#080808',  # Very dark to show orb glow through edges
+            insertbackground=self.colors['primary'],
+            selectbackground=self.colors['primary_dark'],
+            selectforeground=self.colors['text'],
             border=0,
-            wrap=tk.WORD
+            wrap=tk.WORD,
+            padx=12,
+            pady=10
         )
-        self.console.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+        self.console.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
         
-        # Configure text tags for colors
-        self.console.tag_configure("success", foreground=self.fg_color)
-        self.console.tag_configure("error", foreground=self.error_color)
-        self.console.tag_configure("warn", foreground=self.warn_color)
-        self.console.tag_configure("dim", foreground=self.dim_color)
-        self.console.tag_configure("accent", foreground=self.accent_color)
+        # Configure text tags
+        self.console.tag_configure("timestamp", foreground=self.colors['text_muted'])
+        self.console.tag_configure("success", foreground=self.colors['success'])
+        self.console.tag_configure("error", foreground=self.colors['error'])
+        self.console.tag_configure("warn", foreground=self.colors['warning'])
+        self.console.tag_configure("dim", foreground=self.colors['text_dim'])
+        self.console.tag_configure("accent", foreground=self.colors['primary'])
+        self.console.tag_configure("info", foreground=self.colors['secondary'])
         
-        # Status bar
-        status_frame = tk.Frame(main_frame, bg=self.bg_color)
-        status_frame.pack(fill=tk.X)
+        # Status bar - bottom
+        self.status_indicator = tk.Label(
+            self.root,
+            text="●",
+            font=self.tiny_font,
+            fg=self.colors['primary'],
+            bg=canvas_bg
+        )
+        self.status_indicator.place(x=20, rely=0.95, anchor='w')
         
         self.status_label = tk.Label(
-            status_frame,
-            text="└─[ READY ]" + "─" * 61 + "┘",
-            font=self.main_font,
-            fg=self.accent_color,
-            bg=self.bg_color,
-            anchor="w"
+            self.root,
+            text=" READY",
+            font=self.tiny_font,
+            fg=self.colors['text_dim'],
+            bg=canvas_bg
         )
-        self.status_label.pack(fill=tk.X)
+        self.status_label.place(x=35, rely=0.95, anchor='w')
+        
+        # ESC hint
+        self.esc_hint = tk.Label(
+            self.root,
+            text="ESC exit",
+            font=self.tiny_font,
+            fg=self.colors['text_muted'],
+            bg=canvas_bg
+        )
+        self.esc_hint.place(relx=0.98, rely=0.95, anchor='e')
+    
+    def create_task_button(self, task, index):
+        """Create a minimal transparent task button"""
+        # Use Label-based button for minimal footprint
+        btn_bg = self.colors['bg']
+        btn_hover = self.colors['bg_hover']
+        
+        btn_frame = tk.Frame(self.tasks_container, bg=self.colors['bg'])
+        btn_frame.pack(fill=tk.X, pady=1)
+        
+        # Single-line compact button
+        btn = tk.Label(
+            btn_frame,
+            text=f" {task['key']}  {task['icon']}  {task['name']}",
+            font=self.small_font,
+            fg=self.colors['text'],
+            bg=btn_bg,
+            anchor='w',
+            cursor="hand2",
+            padx=8,
+            pady=6
+        )
+        btn.pack(fill=tk.X)
+        
+        def on_enter(e):
+            btn.configure(bg=btn_hover, fg=self.colors['primary'])
+        
+        def on_leave(e):
+            btn.configure(bg=btn_bg, fg=self.colors['text'])
+        
+        def on_click(e):
+            self.execute_task(task)
+        
+        btn.bind("<Enter>", on_enter)
+        btn.bind("<Leave>", on_leave)
+        btn.bind("<Button-1>", on_click)
     
     def bind_keys(self):
         for task in self.tasks:
             self.root.bind(f"<{task['key']}>", lambda e, t=task: self.execute_task(t))
         self.root.bind("<Escape>", lambda e: self.root.quit())
     
-    # ─── ANIMATION SYSTEM ─────────────────────────────────────────────────
-    def on_click_animation(self, event):
-        """Spawn dark green ripple animation on click"""
-        x, y = event.x_root - self.root.winfo_rootx(), event.y_root - self.root.winfo_rooty()
-        self.spawn_ripple(x, y)
-        self.spawn_matrix_burst(x, y)
+    def start_animations(self):
+        """Start background animations"""
+        self.scan_line_y = 0
+        self.animate_cursor()
+        self.animate_scanline()
     
-    def spawn_ripple(self, x, y):
-        """Create expanding ring ripple effect"""
-        ripple = {
-            'x': x, 'y': y, 
-            'radius': 5, 
-            'max_radius': 80,
-            'alpha': 255
-        }
-        self.ripples.append(ripple)
-        if len(self.ripples) == 1:
-            self.animate_ripples()
+    def animate_cursor(self):
+        """Blinking cursor animation"""
+        self.cursor_visible = not self.cursor_visible
+        self.cursor_label.config(
+            fg=self.colors['primary'] if self.cursor_visible else self.colors['bg']
+        )
+        self.root.after(530, self.animate_cursor)
     
-    def animate_ripples(self):
-        """Animate all active ripples"""
-        self.anim_canvas.delete("ripple")
-        
-        active_ripples = []
-        for ripple in self.ripples:
-            ripple['radius'] += 4
-            ripple['alpha'] -= 12
-            
-            if ripple['alpha'] > 0 and ripple['radius'] < ripple['max_radius']:
-                # Calculate green intensity based on alpha
-                intensity = max(0, min(255, int(ripple['alpha'] * 0.6)))
-                color = f"#{0:02x}{intensity:02x}{0:02x}"
-                
-                self.anim_canvas.create_oval(
-                    ripple['x'] - ripple['radius'],
-                    ripple['y'] - ripple['radius'],
-                    ripple['x'] + ripple['radius'],
-                    ripple['y'] + ripple['radius'],
-                    outline=color,
-                    width=2,
-                    tags="ripple"
-                )
-                active_ripples.append(ripple)
-        
-        self.ripples = active_ripples
-        
-        if self.ripples:
-            self.root.after(25, self.animate_ripples)
-    
-    def spawn_matrix_burst(self, x, y):
-        """Spawn falling matrix-style characters from click point"""
-        chars = "01アイウエオカキクケコ"
-        for _ in range(8):
-            char_data = {
-                'x': x + random.randint(-30, 30),
-                'y': y,
-                'char': random.choice(chars),
-                'speed': random.uniform(3, 7),
-                'alpha': 255,
-                'id': None
-            }
-            self.matrix_chars.append(char_data)
-        
-        if len(self.matrix_chars) <= 8:
-            self.animate_matrix()
-    
-    def animate_matrix(self):
-        """Animate falling matrix characters"""
-        self.anim_canvas.delete("matrix")
-        
-        active_chars = []
-        for char in self.matrix_chars:
-            char['y'] += char['speed']
-            char['alpha'] -= 8
-            
-            if char['alpha'] > 0:
-                intensity = max(0, min(255, int(char['alpha'] * 0.5)))
-                color = f"#{0:02x}{intensity:02x}{0:02x}"
-                
-                self.anim_canvas.create_text(
-                    char['x'], char['y'],
-                    text=char['char'],
-                    font=self.small_font,
-                    fill=color,
-                    tags="matrix"
-                )
-                active_chars.append(char)
-        
-        self.matrix_chars = active_chars
-        
-        if self.matrix_chars:
-            self.root.after(30, self.animate_matrix)
+    def animate_scanline(self):
+        """Subtle scanline effect"""
+        self.bg_canvas.delete("scanline")
+        self.scan_line_y = (self.scan_line_y + 2) % max(1, self.root.winfo_height())
+        self.bg_canvas.create_line(
+            0, self.scan_line_y,
+            self.root.winfo_width(), self.scan_line_y,
+            fill='#1a1a1a', width=1, tags="scanline"
+        )
+        self.bg_canvas.tag_raise("scanline")
+        self.root.after(16, self.animate_scanline)
     
     def log(self, message, tag="success"):
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.console.insert(tk.END, f"[{timestamp}] ", "dim")
-        self.console.insert(tk.END, f"{message}\n", tag)
+        self.console.insert(tk.END, f"{timestamp} ", "timestamp")
+        self.console.insert(tk.END, f"│ {message}\n", tag)
+        self.console.see(tk.END)
+    
+    def log_raw(self, message, tag="dim"):
+        """Log without timestamp"""
+        self.console.insert(tk.END, f"       │ {message}\n", tag)
         self.console.see(tk.END)
     
     def log_startup(self):
-        self.console.insert(tk.END, THIN_DIVIDER + "\n", "dim")
-        self.log("VomTools initialized successfully", "accent")
-        self.log("Press ESC to exit | Function keys to execute tasks", "dim")
-        self.console.insert(tk.END, THIN_DIVIDER + "\n", "dim")
+        self.console.insert(tk.END, "\n", "dim")
+        self.log("VomTools initialized", "accent")
+        self.log_raw("Ready to execute commands", "dim")
+        self.console.insert(tk.END, "\n", "dim")
     
-    def set_status(self, text, is_error=False):
-        color = self.error_color if is_error else self.accent_color
-        self.status_label.config(
-            text=f"└─[ {text} ]" + "─" * (61 - len(text)) + "┘",
-            fg=color
-        )
+    def set_status(self, text, is_error=False, is_warning=False):
+        if is_error:
+            color = self.colors['error']
+        elif is_warning:
+            color = self.colors['warning']
+        else:
+            color = self.colors['primary']
+        
+        self.status_indicator.config(fg=color)
+        self.status_label.config(text=f" {text}", fg=self.colors['text_dim'])
     
     def execute_task(self, task):
         if task["command"] is None:
-            # Special case: clear console
             self.console.delete(1.0, tk.END)
             self.log_startup()
-            self.log("Console cleared", "accent")
+            self.log("Console cleared", "info")
             return
         
         if task["command"] == "__audio_devices__":
@@ -390,7 +608,7 @@ class VomTools:
             return
         
         self.log(f"Executing: {task['name']}", "warn")
-        self.set_status(f"RUNNING: {task['name']}")
+        self.set_status(f"RUNNING: {task['name']}", is_warning=True)
         
         def run():
             try:
@@ -402,7 +620,6 @@ class VomTools:
                     shell=True,
                     timeout=300
                 )
-                
                 self.root.after(0, lambda: self.handle_result(task, result))
             except subprocess.TimeoutExpired:
                 self.root.after(0, lambda: self.log("Task timed out (300s limit)", "error"))
@@ -416,28 +633,26 @@ class VomTools:
     
     def handle_result(self, task, result):
         if result.stdout:
-            for line in result.stdout.strip().split('\n')[:50]:  # Limit output
-                self.log(line, "success")
+            for line in result.stdout.strip().split('\n')[:50]:
+                self.log_raw(line, "success")
         if result.stderr:
             for line in result.stderr.strip().split('\n')[:20]:
-                self.log(line, "error")
+                self.log_raw(line, "error")
         
         if result.returncode == 0:
-            self.log(f"✓ Task completed: {task['name']}", "accent")
+            self.log(f"Completed: {task['name']}", "accent")
             self.set_status("READY")
         else:
-            self.log(f"✗ Task failed with code: {result.returncode}", "error")
+            self.log(f"Failed with code: {result.returncode}", "error")
             self.set_status("FAILED", True)
     
     # ─── AUDIO DEVICE MANAGEMENT ──────────────────────────────────────────
     def show_audio_devices(self):
-        """Show audio playback devices and allow setting default"""
-        self.log("Scanning audio playback devices...", "warn")
-        self.set_status("SCANNING AUDIO DEVICES")
+        self.log("Scanning audio devices...", "info")
+        self.set_status("SCANNING", is_warning=True)
         
         def scan():
             try:
-                # Use PowerShell registry approach for reliable audio endpoint enumeration
                 ps_script = '''
 $results = @()
 $renderKey = "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render"
@@ -447,11 +662,9 @@ if (Test-Path $renderKey) {
         $deviceGuid = $device.PSChildName
         $deviceKey = $device.PSPath
         
-        # Check device state directly on device key (1 = active, others = disabled/unplugged)
         $devProps = Get-ItemProperty -Path $deviceKey -ErrorAction SilentlyContinue
         $state = $devProps.DeviceState
         
-        # Only include active devices (state 1)
         if ($state -ne 1) { continue }
         
         $propsKey = Join-Path $deviceKey "Properties"
@@ -459,7 +672,6 @@ if (Test-Path $renderKey) {
         
         $props = Get-ItemProperty -Path $propsKey -ErrorAction SilentlyContinue
         
-        # Get friendly name: {a45c254e...},2 = short name, {b3f8fa53...},6 = device description
         $shortName = $null
         $deviceDesc = $null
         foreach ($prop in $props.PSObject.Properties) {
@@ -473,7 +685,6 @@ if (Test-Path $renderKey) {
         $friendlyName = if ($shortName -and $deviceDesc) { "$shortName ($deviceDesc)" } elseif ($shortName) { $shortName } else { $deviceDesc }
         
         if ($friendlyName) {
-            # Build the proper device ID format that PolicyConfig expects
             $fullId = "{0.0.0.00000000}." + $deviceGuid
             $results += @{
                 "ID" = $fullId
@@ -490,24 +701,21 @@ $results | ConvertTo-Json -Compress
                     capture_output=True, text=True, timeout=30,
                     creationflags=SUBPROCESS_FLAGS
                 )
-                
                 self.root.after(0, lambda: self.display_audio_devices(result.stdout, result.stderr))
             except Exception as e:
-                self.root.after(0, lambda: self.log(f"Error scanning devices: {e}", "error"))
+                self.root.after(0, lambda: self.log(f"Error: {e}", "error"))
                 self.root.after(0, lambda: self.set_status("ERROR", True))
         
         thread = threading.Thread(target=scan, daemon=True)
         thread.start()
     
     def display_audio_devices(self, json_output, stderr=""):
-        """Display audio devices and create selection buttons"""
         import json
         
-        self.log(THIN_DIVIDER, "dim")
-        self.log("AUDIO PLAYBACK DEVICES:", "accent")
+        self.log("Audio playback devices:", "accent")
         
         if stderr:
-            self.log(f"Warning: {stderr[:200]}", "warn")
+            self.log_raw(f"Warning: {stderr[:200]}", "warn")
         
         try:
             devices = json.loads(json_output) if json_output.strip() else []
@@ -517,66 +725,60 @@ $results | ConvertTo-Json -Compress
             self.audio_devices = devices
             
             if not devices:
-                self.log("No audio devices found", "warn")
-                self.set_status("NO DEVICES FOUND", True)
+                self.log_raw("No devices found", "warn")
+                self.set_status("NO DEVICES", True)
                 return
             
             for i, dev in enumerate(devices):
-                name = dev.get('Name', 'Unknown Device')
-                self.log(f"  [{i+1}] {name}", "success")
+                name = dev.get('Name', 'Unknown')
+                self.log_raw(f"[{i+1}] {name}", "success")
             
-            self.log("", "dim")
-            self.log("Select a device to set as default:", "dim")
-            self.log(THIN_DIVIDER, "dim")
-            
-            # Create device selection popup
             self.show_device_selector(devices)
-            self.set_status("SELECT AUDIO DEVICE")
+            self.set_status("SELECT DEVICE")
             
         except json.JSONDecodeError:
-            self.log("Could not parse device list", "error")
-            self.log("Raw output:", "dim")
-            self.log(json_output[:500] if json_output else "(empty)", "dim")
+            self.log_raw("Could not parse device list", "error")
             self.set_status("PARSE ERROR", True)
     
     def show_device_selector(self, devices):
-        """Show a popup to select audio device"""
+        """Modern device selector popup"""
         popup = tk.Toplevel(self.root)
-        popup.title("Select Audio Device")
-        popup.configure(bg=self.bg_color)
-        popup.geometry("500x400")
+        popup.title("Audio Device")
+        popup.configure(bg=self.colors['bg'])
+        popup.geometry("450x380")
         popup.transient(self.root)
         popup.grab_set()
         
-        # Set icon
         icon_path = os.path.join(os.path.dirname(__file__), 'vomtools.ico')
         if os.path.exists(icon_path):
             popup.iconbitmap(icon_path)
         
-        header = tk.Label(
-            popup,
-            text="┌─[ SELECT DEFAULT AUDIO OUTPUT ]─────────────────┐",
-            font=self.main_font,
-            fg=self.accent_color,
-            bg=self.bg_color
-        )
-        header.pack(pady=(10, 5))
+        # Header
+        header = tk.Frame(popup, bg=self.colors['bg'])
+        header.pack(fill=tk.X, padx=20, pady=(20, 15))
         
-        # Role selection
-        role_frame = tk.Frame(popup, bg=self.bg_color)
-        role_frame.pack(fill=tk.X, padx=20, pady=5)
+        tk.Label(
+            header,
+            text="◢",
+            font=self.tiny_font,
+            fg=self.colors['primary'],
+            bg=self.colors['bg']
+        ).pack(side=tk.LEFT)
         
-        role_label = tk.Label(
-            role_frame,
-            text="Audio Role:",
-            font=self.small_font,
-            fg=self.dim_color,
-            bg=self.bg_color
-        )
-        role_label.pack(side=tk.LEFT)
+        tk.Label(
+            header,
+            text=" SELECT AUDIO OUTPUT",
+            font=self.tiny_font,
+            fg=self.colors['text_dim'],
+            bg=self.colors['bg']
+        ).pack(side=tk.LEFT)
         
-        self.selected_role = tk.IntVar(value=1)  # Default to Multimedia
-        roles = [("Multimedia", 1), ("Console", 0), ("Communications", 2)]
+        # Role selector
+        role_frame = tk.Frame(popup, bg=self.colors['bg'])
+        role_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
+        
+        self.selected_role = tk.IntVar(value=1)
+        roles = [("Multimedia", 1), ("Console", 0), ("Comms", 2)]
         
         for role_name, role_val in roles:
             rb = tk.Radiobutton(
@@ -584,66 +786,86 @@ $results | ConvertTo-Json -Compress
                 text=role_name,
                 variable=self.selected_role,
                 value=role_val,
-                font=self.small_font,
-                fg=self.fg_color,
-                bg=self.bg_color,
-                activeforeground="#ffffff",
-                activebackground=self.bg_color,
-                selectcolor="#1a1a1a",
-                cursor="hand2"
+                font=self.tiny_font,
+                fg=self.colors['text'],
+                bg=self.colors['bg'],
+                activeforeground=self.colors['primary'],
+                activebackground=self.colors['bg'],
+                selectcolor=self.colors['bg_elevated'],
+                cursor="hand2",
+                highlightthickness=0
             )
-            rb.pack(side=tk.LEFT, padx=10)
+            rb.pack(side=tk.LEFT, padx=(0, 15))
         
-        # Scrollable frame for devices
-        canvas = tk.Canvas(popup, bg=self.bg_color, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(popup, orient="vertical", command=canvas.yview)
-        scroll_frame = tk.Frame(canvas, bg=self.bg_color)
-        
-        scroll_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        # Devices list
+        devices_frame = tk.Frame(popup, bg=self.colors['bg'])
+        devices_frame.pack(fill=tk.BOTH, expand=True, padx=20)
         
         for i, dev in enumerate(devices):
-            name = dev.get('Name', 'Unknown Device')
-            btn = tk.Button(
-                scroll_frame,
-                text=f"  [{i+1}] {name}  ",
-                font=self.main_font,
-                fg=self.fg_color,
-                bg="#1a1a1a",
-                activeforeground="#ffffff",
-                activebackground="#003300",
-                border=0,
-                cursor="hand2",
-                anchor="w",
-                command=lambda d=dev, p=popup: self.set_default_audio(d, p, self.selected_role.get())
+            name = dev.get('Name', 'Unknown')
+            
+            btn = tk.Frame(devices_frame, bg=self.colors['bg_elevated'], cursor="hand2")
+            btn.pack(fill=tk.X, pady=2)
+            
+            content = tk.Frame(btn, bg=self.colors['bg_elevated'])
+            content.pack(fill=tk.X, padx=12, pady=10)
+            
+            num = tk.Label(
+                content,
+                text=f"{i+1}",
+                font=self.tiny_font,
+                fg=self.colors['primary'],
+                bg=self.colors['bg_elevated'],
+                width=2
             )
-            btn.pack(fill=tk.X, padx=20, pady=3)
-        
-        canvas.pack(side="left", fill="both", expand=True, padx=10)
-        scrollbar.pack(side="right", fill="y")
+            num.pack(side=tk.LEFT)
+            
+            name_lbl = tk.Label(
+                content,
+                text=name,
+                font=self.small_font,
+                fg=self.colors['text'],
+                bg=self.colors['bg_elevated'],
+                anchor='w'
+            )
+            name_lbl.pack(side=tk.LEFT, padx=(10, 0))
+            
+            widgets = [btn, content, num, name_lbl]
+            
+            def on_enter(e, w=widgets):
+                for widget in w:
+                    widget.configure(bg=self.colors['bg_hover'])
+            
+            def on_leave(e, w=widgets):
+                for widget in w:
+                    widget.configure(bg=self.colors['bg_elevated'])
+            
+            def on_click(e, d=dev, p=popup):
+                self.set_default_audio(d, p, self.selected_role.get())
+            
+            for w in widgets:
+                w.bind("<Enter>", on_enter)
+                w.bind("<Leave>", on_leave)
+                w.bind("<Button-1>", on_click)
         
         # Cancel button
-        cancel_btn = tk.Button(
-            popup,
-            text="[ CANCEL ]",
-            font=self.main_font,
-            fg=self.error_color,
-            bg="#1a1a1a",
-            activeforeground="#ffffff",
-            activebackground="#330000",
-            border=0,
-            cursor="hand2",
-            command=popup.destroy
+        cancel_frame = tk.Frame(popup, bg=self.colors['bg'])
+        cancel_frame.pack(fill=tk.X, padx=20, pady=15)
+        
+        cancel_btn = tk.Label(
+            cancel_frame,
+            text="Cancel",
+            font=self.tiny_font,
+            fg=self.colors['text_muted'],
+            bg=self.colors['bg'],
+            cursor="hand2"
         )
-        cancel_btn.pack(pady=10)
+        cancel_btn.pack(side=tk.RIGHT)
+        cancel_btn.bind("<Button-1>", lambda e: popup.destroy())
+        cancel_btn.bind("<Enter>", lambda e: cancel_btn.configure(fg=self.colors['error']))
+        cancel_btn.bind("<Leave>", lambda e: cancel_btn.configure(fg=self.colors['text_muted']))
     
     def set_default_audio(self, device, popup, role=1):
-        """Set the selected device as default audio output"""
         popup.destroy()
         
         name = device.get('Name', 'Unknown')
@@ -651,13 +873,11 @@ $results | ConvertTo-Json -Compress
         role_names = {0: "Console", 1: "Multimedia", 2: "Communications"}
         role_name = role_names.get(role, "Unknown")
         
-        self.log(f"Setting {role_name} audio device: {name}", "warn")
-        self.set_status(f"SETTING: {name[:30]}")
+        self.log(f"Setting {role_name}: {name}", "warn")
+        self.set_status(f"SETTING DEVICE", is_warning=True)
         
         def set_device():
             try:
-                # Use PolicyConfigClient COM interface to set default audio device
-                # Using the Windows 10/11 IPolicyConfig interface
                 ps_script = f'''
 Add-Type -TypeDefinition @"
 using System;
@@ -702,18 +922,16 @@ $deviceId = "{device_id}"
 $role = {role}
 $result = [AudioSwitcher]::SetDefaultDevice($deviceId, $role)
 if ($result -eq 0) {{
-    Write-Output "SUCCESS: Default audio device changed"
+    Write-Output "SUCCESS"
 }} else {{
-    Write-Output "ERROR: Failed to set default device (HRESULT: $result)"
+    Write-Output "ERROR:$result"
 }}
 '''
-                
                 result = subprocess.run(
                     ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
                     capture_output=True, text=True, timeout=30,
                     creationflags=SUBPROCESS_FLAGS
                 )
-                
                 self.root.after(0, lambda: self.handle_audio_set_result(name, result))
             except Exception as e:
                 self.root.after(0, lambda: self.log(f"Error: {e}", "error"))
@@ -723,24 +941,15 @@ if ($result -eq 0) {{
         thread.start()
     
     def handle_audio_set_result(self, device_name, result):
-        """Handle the result of setting audio device"""
-        if result.stdout:
-            for line in result.stdout.strip().split('\n'):
-                if "SUCCESS" in line:
-                    self.log(line, "accent")
-                elif "ERROR" in line:
-                    self.log(line, "error")
-                else:
-                    self.log(line, "success")
+        output = result.stdout.strip() if result.stdout else ""
         
-        if result.stderr:
-            for line in result.stderr.strip().split('\n'):
-                self.log(line, "error")
-        
-        if result.returncode == 0 and "SUCCESS" in (result.stdout or ""):
-            self.log(f"✓ Audio device set: {device_name}", "accent")
+        if "SUCCESS" in output:
+            self.log(f"Audio set: {device_name}", "accent")
             self.set_status("READY")
         else:
+            self.log(f"Failed to set device", "error")
+            if result.stderr:
+                self.log_raw(result.stderr.strip()[:100], "error")
             self.set_status("FAILED", True)
 
 
