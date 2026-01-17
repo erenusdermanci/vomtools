@@ -336,8 +336,16 @@ class VomTools:
                 "description": "Manage audio output"
             },
             {
-                "name": "GameDev Workspace",
+                "name": "Suspend Task",
                 "key": "F2",
+                "icon": "◫",
+                "command": "__suspend_task__",
+                "args": [],
+                "description": "Suspend/resume applications"
+            },
+            {
+                "name": "GameDev Workspace",
+                "key": "F3",
                 "icon": "▶",
                 "command": "powershell.exe",
                 "args": ["-ExecutionPolicy", "Bypass", "-File", 
@@ -346,7 +354,7 @@ class VomTools:
             },
             {
                 "name": "System Info",
-                "key": "F3",
+                "key": "F4",
                 "icon": "◈",
                 "command": "systeminfo",
                 "args": [],
@@ -354,7 +362,7 @@ class VomTools:
             },
             {
                 "name": "Network Status",
-                "key": "F4",
+                "key": "F5",
                 "icon": "◎",
                 "command": "ipconfig",
                 "args": ["/all"],
@@ -362,7 +370,7 @@ class VomTools:
             },
             {
                 "name": "Clear Console",
-                "key": "F5",
+                "key": "F6",
                 "icon": "◇",
                 "command": None,
                 "args": [],
@@ -663,6 +671,10 @@ class VomTools:
             self.show_audio_devices()
             return
         
+        if task["command"] == "__suspend_task__":
+            self.show_suspend_task()
+            return
+        
         self.log(f"Executing: {task['name']}", "warn")
         self.set_status(f"RUNNING: {task['name']}", is_warning=True)
         
@@ -702,6 +714,352 @@ class VomTools:
             self.log(f"Failed with code: {result.returncode}", "error")
             self.set_status("FAILED", True)
     
+    # ─── SUSPEND TASK MANAGEMENT ──────────────────────────────────────────
+    def show_suspend_task(self):
+        self.log("Scanning visible windows...", "info")
+        self.set_status("SCANNING", is_warning=True)
+        self.suspended_pids = getattr(self, 'suspended_pids', set())
+        
+        def scan():
+            try:
+                ps_script = '''
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Collections.Generic;
+
+public class WindowEnumerator {
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+    
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    
+    [DllImport("user32.dll")]
+    private static extern int GetWindowTextLength(IntPtr hWnd);
+    
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    
+    private static List<uint> processIds = new List<uint>();
+    
+    private static bool EnumWindowCallback(IntPtr hWnd, IntPtr lParam) {
+        if (!IsWindowVisible(hWnd)) return true;
+        
+        int length = GetWindowTextLength(hWnd);
+        if (length == 0) return true;
+        
+        uint processId;
+        GetWindowThreadProcessId(hWnd, out processId);
+        
+        if (!processIds.Contains(processId)) {
+            processIds.Add(processId);
+        }
+        return true;
+    }
+    
+    public static uint[] GetVisibleWindowProcessIds() {
+        processIds.Clear();
+        EnumWindows(new EnumWindowsProc(EnumWindowCallback), IntPtr.Zero);
+        return processIds.ToArray();
+    }
+}
+"@
+
+$procIds = [WindowEnumerator]::GetVisibleWindowProcessIds()
+$results = @()
+$seen = @{}
+
+foreach ($procId in $procIds) {
+    try {
+        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+        if ($proc -and $proc.MainWindowTitle -and -not $seen.ContainsKey($proc.Id)) {
+            $seen[$proc.Id] = $true
+            $results += @{
+                "PID" = $proc.Id
+                "Name" = $proc.ProcessName
+                "Title" = $proc.MainWindowTitle
+            }
+        }
+    } catch {}
+}
+
+$results | ConvertTo-Json -Compress
+'''
+                result = subprocess.run(
+                    ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
+                    capture_output=True, text=True, timeout=30,
+                    creationflags=SUBPROCESS_FLAGS
+                )
+                self.root.after(0, lambda: self.display_suspend_tasks(result.stdout, result.stderr))
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"Error: {e}", "error"))
+                self.root.after(0, lambda: self.set_status("ERROR", True))
+        
+        thread = threading.Thread(target=scan, daemon=True)
+        thread.start()
+    
+    def display_suspend_tasks(self, json_output, stderr=""):
+        self.log("Applications with windows:", "accent")
+        
+        if stderr:
+            self.log_raw(f"Warning: {stderr[:200]}", "warn")
+        
+        try:
+            processes = json.loads(json_output) if json_output.strip() else []
+            if not isinstance(processes, list):
+                processes = [processes]
+            
+            if not processes:
+                self.log_raw("No visible windows found", "warn")
+                self.set_status("NO WINDOWS", True)
+                return
+            
+            for proc in processes:
+                name = proc.get('Name', 'Unknown')
+                pid = proc.get('PID', 0)
+                status = "⏸ SUSPENDED" if pid in self.suspended_pids else ""
+                self.log_raw(f"[{pid}] {name} {status}", "success")
+            
+            self.show_suspend_selector(processes)
+            self.set_status("SELECT APP")
+            
+        except json.JSONDecodeError:
+            self.log_raw("Could not parse process list", "error")
+            self.set_status("PARSE ERROR", True)
+    
+    def show_suspend_selector(self, processes):
+        popup = tk.Toplevel(self.root)
+        popup.title("Suspend/Resume Task")
+        popup.configure(bg=self.colors['bg'])
+        popup.geometry("550x450")
+        popup.transient(self.root)
+        popup.grab_set()
+        
+        icon_path = os.path.join(os.path.dirname(__file__), 'vomtools.ico')
+        if os.path.exists(icon_path):
+            popup.iconbitmap(icon_path)
+        
+        header = tk.Frame(popup, bg=self.colors['bg'])
+        header.pack(fill=tk.X, padx=20, pady=(20, 15))
+        
+        tk.Label(
+            header,
+            text="◫",
+            font=self.tiny_font,
+            fg=self.colors['primary'],
+            bg=self.colors['bg']
+        ).pack(side=tk.LEFT)
+        
+        tk.Label(
+            header,
+            text=" SUSPEND / RESUME APPLICATION",
+            font=self.tiny_font,
+            fg=self.colors['text_dim'],
+            bg=self.colors['bg']
+        ).pack(side=tk.LEFT)
+        
+        list_frame = tk.Frame(popup, bg=self.colors['bg'])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
+        
+        canvas = tk.Canvas(list_frame, bg=self.colors['bg'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.colors['bg'])
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        for proc in processes:
+            name = proc.get('Name', 'Unknown')
+            title = proc.get('Title', '')
+            pid = proc.get('PID', 0)
+            is_suspended = pid in self.suspended_pids
+            
+            btn = tk.Frame(scrollable_frame, bg=self.colors['bg_elevated'], cursor="hand2")
+            btn.pack(fill=tk.X, pady=2)
+            
+            content = tk.Frame(btn, bg=self.colors['bg_elevated'])
+            content.pack(fill=tk.X, padx=12, pady=10)
+            
+            status_icon = tk.Label(
+                content,
+                text="⏸" if is_suspended else "▶",
+                font=self.tiny_font,
+                fg=self.colors['warning'] if is_suspended else self.colors['primary'],
+                bg=self.colors['bg_elevated'],
+                width=2
+            )
+            status_icon.pack(side=tk.LEFT)
+            
+            name_lbl = tk.Label(
+                content,
+                text=f"{name} (PID: {pid})",
+                font=self.small_font,
+                fg=self.colors['warning'] if is_suspended else self.colors['text'],
+                bg=self.colors['bg_elevated'],
+                anchor='w'
+            )
+            name_lbl.pack(side=tk.LEFT, padx=(10, 0))
+            
+            if title and len(title) < 50:
+                title_lbl = tk.Label(
+                    content,
+                    text=f"  {title[:40]}",
+                    font=self.tiny_font,
+                    fg=self.colors['text_muted'],
+                    bg=self.colors['bg_elevated'],
+                    anchor='w'
+                )
+                title_lbl.pack(side=tk.LEFT, padx=(5, 0))
+            else:
+                title_lbl = None
+            
+            widgets = [btn, content, status_icon, name_lbl]
+            if title_lbl:
+                widgets.append(title_lbl)
+            
+            def on_enter(e, w=widgets):
+                for widget in w:
+                    widget.configure(bg=self.colors['bg_hover'])
+            
+            def on_leave(e, w=widgets):
+                for widget in w:
+                    widget.configure(bg=self.colors['bg_elevated'])
+            
+            def on_click(e, p=proc, pop=popup):
+                self.toggle_suspend(p, pop)
+            
+            for w in widgets:
+                w.bind("<Enter>", on_enter)
+                w.bind("<Leave>", on_leave)
+                w.bind("<Button-1>", on_click)
+        
+        cancel_frame = tk.Frame(popup, bg=self.colors['bg'])
+        cancel_frame.pack(fill=tk.X, padx=20, pady=15)
+        
+        cancel_btn = tk.Label(
+            cancel_frame,
+            text="Cancel",
+            font=self.tiny_font,
+            fg=self.colors['text_muted'],
+            bg=self.colors['bg'],
+            cursor="hand2"
+        )
+        cancel_btn.pack(side=tk.RIGHT)
+        cancel_btn.bind("<Button-1>", lambda e: popup.destroy())
+        cancel_btn.bind("<Enter>", lambda e: cancel_btn.configure(fg=self.colors['error']))
+        cancel_btn.bind("<Leave>", lambda e: cancel_btn.configure(fg=self.colors['text_muted']))
+    
+    def toggle_suspend(self, proc, popup):
+        popup.destroy()
+        
+        pid = proc.get('PID', 0)
+        name = proc.get('Name', 'Unknown')
+        is_suspended = pid in self.suspended_pids
+        
+        action = "Resuming" if is_suspended else "Suspending"
+        self.log(f"{action}: {name} (PID: {pid})", "warn")
+        self.set_status(f"{action.upper()}", is_warning=True)
+        
+        def do_toggle():
+            try:
+                if is_suspended:
+                    ps_script = f'''
+$proc = Get-Process -Id {pid} -ErrorAction Stop
+$handle = $proc.Handle
+$result = [System.Diagnostics.Process]::GetProcessById({pid})
+foreach ($thread in $result.Threads) {{
+    $tHandle = [IntPtr]::Zero
+    try {{
+        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class ThreadControl {{
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr OpenThread(int dwDesiredAccess, bool bInheritHandle, int dwThreadId);
+    [DllImport("kernel32.dll")]
+    public static extern uint ResumeThread(IntPtr hThread);
+    [DllImport("kernel32.dll")]
+    public static extern bool CloseHandle(IntPtr hObject);
+}}
+"@ -ErrorAction SilentlyContinue
+        $tHandle = [ThreadControl]::OpenThread(0x0002, $false, $thread.Id)
+        if ($tHandle -ne [IntPtr]::Zero) {{
+            [ThreadControl]::ResumeThread($tHandle) | Out-Null
+            [ThreadControl]::CloseHandle($tHandle) | Out-Null
+        }}
+    }} catch {{}}
+}}
+Write-Output "SUCCESS"
+'''
+                else:
+                    ps_script = f'''
+$proc = Get-Process -Id {pid} -ErrorAction Stop
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class ThreadControl {{
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr OpenThread(int dwDesiredAccess, bool bInheritHandle, int dwThreadId);
+    [DllImport("kernel32.dll")]
+    public static extern uint SuspendThread(IntPtr hThread);
+    [DllImport("kernel32.dll")]
+    public static extern bool CloseHandle(IntPtr hObject);
+}}
+"@ -ErrorAction SilentlyContinue
+foreach ($thread in $proc.Threads) {{
+    $tHandle = [ThreadControl]::OpenThread(0x0002, $false, $thread.Id)
+    if ($tHandle -ne [IntPtr]::Zero) {{
+        [ThreadControl]::SuspendThread($tHandle) | Out-Null
+        [ThreadControl]::CloseHandle($tHandle) | Out-Null
+    }}
+}}
+Write-Output "SUCCESS"
+'''
+                result = subprocess.run(
+                    ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
+                    capture_output=True, text=True, timeout=30,
+                    creationflags=SUBPROCESS_FLAGS
+                )
+                self.root.after(0, lambda: self.handle_suspend_result(pid, name, is_suspended, result))
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"Error: {e}", "error"))
+                self.root.after(0, lambda: self.set_status("ERROR", True))
+        
+        thread = threading.Thread(target=do_toggle, daemon=True)
+        thread.start()
+    
+    def handle_suspend_result(self, pid, name, was_suspended, result):
+        output = result.stdout.strip() if result.stdout else ""
+        
+        if "SUCCESS" in output:
+            if was_suspended:
+                self.suspended_pids.discard(pid)
+                self.log(f"Resumed: {name}", "accent")
+            else:
+                self.suspended_pids.add(pid)
+                self.log(f"Suspended: {name}", "accent")
+            self.set_status("READY")
+        else:
+            self.log(f"Failed to toggle suspend state", "error")
+            if result.stderr:
+                self.log_raw(result.stderr.strip()[:100], "error")
+            self.set_status("FAILED", True)
+
     # ─── AUDIO DEVICE MANAGEMENT ──────────────────────────────────────────
     def show_audio_devices(self):
         self.log("Scanning audio devices...", "info")
